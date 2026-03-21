@@ -47,6 +47,7 @@ class LoginWindow(tk.Tk):
         self.auth = None
         self.license_info: dict | None = None
         self._authenticated = False
+        self._login_in_progress = False
 
         self._build_ui()
         self._load_last_email()
@@ -287,39 +288,57 @@ class LoginWindow(tk.Tk):
         self._error_var.set(msg)
 
     def _on_login(self):
+        if self._login_in_progress:
+            return
         email = self._email_var.get().strip()
         password = self._pass_var.get().strip()
         if not email or not password:
             self._show_error("Preencha e-mail e senha.")
             return
 
+        self._login_in_progress = True
         self._show_error("")
         self._set_loading(True)
 
         def _do():
             try:
                 from auth.supabase_client import SupabaseAuth
-                from auth.license_guard import LicenseGuard
 
                 auth = SupabaseAuth()
                 session = auth.login(email, password)
+
+                if session is None:
+                    self.after(0, lambda: self._login_failed("Sessao nao retornada. Verifique suas credenciais."))
+                    return
 
                 # Check license
                 user_id = session.user.id if hasattr(session, "user") else None
                 license_info = auth.check_license(user_id) if user_id else {}
                 is_active = license_info.get("is_active", False)
 
-                # Update offline cache
-                guard = LicenseGuard()
-                guard.check(session)
+                # Try to update offline cache (non-critical)
+                try:
+                    from auth.license_guard import LicenseGuard
+                    guard = LicenseGuard()
+                    guard.check(session)
+                except Exception:
+                    pass
 
                 self.after(0, lambda: self._login_success(auth, session, license_info, email, is_active))
             except Exception as exc:
                 self.after(0, lambda: self._login_failed(str(exc)))
 
-        threading.Thread(target=_do, daemon=True).start()
+        t = threading.Thread(target=_do, daemon=True)
+        t.start()
+
+        # Timeout: if login takes more than 15 seconds, cancel
+        def _check_timeout():
+            if t.is_alive() and self._login_in_progress:
+                self._login_failed("Tempo esgotado. Verifique sua conexao.")
+        self.after(15000, _check_timeout)
 
     def _login_success(self, auth, session, license_info, email, is_active):
+        self._login_in_progress = False
         self._set_loading(False)
         self._save_last_email(email)
 
@@ -345,16 +364,21 @@ class LoginWindow(tk.Tk):
         self.destroy()
 
     def _login_failed(self, msg: str):
+        self._login_in_progress = False
         self._set_loading(False)
+        self._clear_remember()
         self._show_error(msg)
 
     def _on_register(self):
+        if self._login_in_progress:
+            return
         email = self._email_var.get().strip()
         password = self._pass_var.get().strip()
         if not email or not password:
             self._show_error("Preencha e-mail e senha para registrar.")
             return
 
+        self._login_in_progress = True
         self._show_error("")
         self._set_loading(True)
 
@@ -364,16 +388,26 @@ class LoginWindow(tk.Tk):
 
                 auth = SupabaseAuth()
                 auth.register(email, password)
-                self.after(
-                    0,
-                    lambda: self._register_done(email),
-                )
+                self.after(0, lambda: self._register_done(email))
             except Exception as exc:
-                self.after(0, lambda: self._login_failed(str(exc)))
+                self.after(0, lambda: self._register_failed(str(exc)))
 
-        threading.Thread(target=_do, daemon=True).start()
+        t = threading.Thread(target=_do, daemon=True)
+        t.start()
+
+        # Timeout
+        def _check_timeout():
+            if t.is_alive() and self._login_in_progress:
+                self._register_failed("Tempo esgotado. Verifique sua conexao.")
+        self.after(15000, _check_timeout)
+
+    def _register_failed(self, msg: str):
+        self._login_in_progress = False
+        self._set_loading(False)
+        self._show_error(msg)
 
     def _register_done(self, email: str):
+        self._login_in_progress = False
         self._set_loading(False)
         self._save_last_email(email)
         self._show_error("")

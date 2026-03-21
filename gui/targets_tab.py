@@ -44,6 +44,7 @@ class TargetsTab(ttk.Frame):
         btn_frame.pack(side=tk.RIGHT)
 
         ttk.Button(btn_frame, text="Adicionar Alvo", style="Accent.TButton", command=self._add_dialog).pack(side=tk.LEFT, padx=(0, 6))
+        ttk.Button(btn_frame, text="Adicionar em Massa", style="Accent.TButton", command=self._add_bulk_dialog).pack(side=tk.LEFT, padx=(0, 6))
         ttk.Button(btn_frame, text="Editar", style="Accent.TButton", command=self._edit_dialog).pack(side=tk.LEFT, padx=(0, 6))
         ttk.Button(btn_frame, text="Excluir", style="Danger.TButton", command=self._delete_targets).pack(side=tk.LEFT, padx=(0, 6))
         ttk.Button(btn_frame, text="Alternar Ativo", style="Accent.TButton", command=self._toggle_active).pack(side=tk.LEFT, padx=(0, 6))
@@ -165,6 +166,124 @@ class TargetsTab(ttk.Frame):
         menu.add_separator()
         menu.add_command(label="Selecionar Todos", command=self._select_all)
         menu.tk_popup(event.x_root, event.y_root)
+
+    # ==================================================================
+    # Bulk add dialog
+    # ==================================================================
+
+    def _add_bulk_dialog(self) -> None:
+        """Open a dialog to add multiple targets at once via links or usernames."""
+        import re
+
+        dlg = tk.Toplevel(self)
+        dlg.title("Adicionar Alvos em Massa")
+        dlg.geometry("500x450")
+        dlg.configure(bg="#1a1a2e")
+        dlg.resizable(False, True)
+        dlg.transient(self.winfo_toplevel())
+        dlg.grab_set()
+
+        bg = "#1a1a2e"
+        fg = "#ffffff"
+        entry_bg = "#16213e"
+
+        tk.Label(dlg, text="Adicionar Alvos em Massa", font=("Segoe UI", 13, "bold"),
+                 bg=bg, fg=fg).pack(pady=(16, 4))
+
+        tk.Label(dlg, text="Cole links ou usernames (um por linha):",
+                 font=("Segoe UI", 9), bg=bg, fg="#9e9e9e").pack(anchor="w", padx=20)
+
+        # Text area
+        text_frame = tk.Frame(dlg, bg=bg)
+        text_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=(4, 8))
+
+        self._bulk_text = tk.Text(
+            text_frame, bg=entry_bg, fg=fg, insertbackground=fg,
+            font=("Segoe UI", 10), relief="flat", highlightthickness=1,
+            highlightcolor="#0f3460", wrap="word",
+        )
+        scrollbar = ttk.Scrollbar(text_frame, orient=tk.VERTICAL, command=self._bulk_text.yview)
+        self._bulk_text.configure(yscrollcommand=scrollbar.set)
+        self._bulk_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        # Example hint
+        tk.Label(dlg, text="Exemplos aceitos:\nhttps://x.com/usuario\nhttps://twitter.com/usuario\n@usuario\nusuario",
+                 font=("Segoe UI", 8), bg=bg, fg="#666688", justify="left").pack(anchor="w", padx=20)
+
+        # Priority
+        prio_frame = tk.Frame(dlg, bg=bg)
+        prio_frame.pack(fill=tk.X, padx=20, pady=(8, 4))
+        tk.Label(prio_frame, text="Prioridade:", font=("Segoe UI", 10), bg=bg, fg=fg).pack(side=tk.LEFT)
+        prio_combo = ttk.Combobox(prio_frame, values=["Baixa", "Media", "Alta"],
+                                   state="readonly", style="Dark.TCombobox", width=10)
+        prio_combo.pack(side=tk.LEFT, padx=(8, 0))
+        prio_combo.set("Alta")
+
+        # Buttons
+        btn_frame = tk.Frame(dlg, bg=bg)
+        btn_frame.pack(pady=12)
+
+        def on_add():
+            raw = self._bulk_text.get("1.0", tk.END).strip()
+            if not raw:
+                messagebox.showwarning("Aviso", "Cole pelo menos um link ou username.", parent=dlg)
+                return
+
+            priority = PRIORITY_VALUES.get(prio_combo.get(), 3)
+            lines = [line.strip() for line in raw.splitlines() if line.strip()]
+
+            added = 0
+            skipped = 0
+            for line in lines:
+                username = self._extract_username(line)
+                if not username:
+                    skipped += 1
+                    continue
+
+                url = f"https://x.com/{username}"
+                try:
+                    self.app.target_manager.add_target(username=username, url=url, priority=priority)
+                    added += 1
+                except Exception:
+                    skipped += 1  # Probably duplicate
+
+            dlg.destroy()
+            self.refresh()
+            self.app.set_status(f"{added} alvo(s) adicionado(s), {skipped} ignorado(s)")
+            messagebox.showinfo("Resultado",
+                                f"{added} alvo(s) adicionado(s) com sucesso!\n{skipped} ignorado(s) (duplicados ou invalidos).",
+                                parent=self)
+
+        tk.Button(btn_frame, text="Adicionar Todos", font=("Segoe UI", 10, "bold"),
+                  bg="#0f3460", fg=fg, relief="flat", padx=16, pady=4,
+                  command=on_add).pack(side=tk.LEFT, padx=6)
+        tk.Button(btn_frame, text="Cancelar", font=("Segoe UI", 10),
+                  bg="#333355", fg=fg, relief="flat", padx=16, pady=4,
+                  command=dlg.destroy).pack(side=tk.LEFT, padx=6)
+
+    @staticmethod
+    def _extract_username(text: str) -> str | None:
+        """Extract a Twitter username from a URL or raw text."""
+        import re
+        text = text.strip().rstrip("/")
+
+        # Match https://x.com/username or https://twitter.com/username
+        match = re.match(r'https?://(?:www\.)?(?:x|twitter)\.com/(@?[\w]+)', text)
+        if match:
+            return match.group(1).lstrip("@")
+
+        # Match @username
+        match = re.match(r'^@([\w]+)$', text)
+        if match:
+            return match.group(1)
+
+        # Match plain username (letters, numbers, underscores only)
+        match = re.match(r'^([\w]+)$', text)
+        if match and len(text) <= 30:
+            return match.group(1)
+
+        return None
 
     # ==================================================================
     # Dialogs
