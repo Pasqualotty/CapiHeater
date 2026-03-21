@@ -20,8 +20,25 @@ sys.path.insert(0, _BASE_DIR)
 os.environ["CAPIHEATER_BASE_DIR"] = _BASE_DIR
 
 from version import __version__
-from utils.config import APP_NAME
+from utils.config import APP_NAME, DATA_DIR
 from utils.logger import get_logger
+
+
+def _migrate_old_data():
+    """Move database files from old location (next to .exe) to AppData."""
+    import shutil
+    old_data_dir = os.path.join(_BASE_DIR, "data")
+    if not os.path.isdir(old_data_dir):
+        return
+    for fname in os.listdir(old_data_dir):
+        if fname.endswith(".db"):
+            old_path = os.path.join(old_data_dir, fname)
+            new_path = os.path.join(DATA_DIR, fname)
+            if not os.path.exists(new_path):
+                try:
+                    shutil.copy2(old_path, new_path)
+                except Exception:
+                    pass
 
 
 def _launch_app(auth_session: dict | None = None):
@@ -40,6 +57,8 @@ def _launch_app(auth_session: dict | None = None):
 
 
 def main():
+    _migrate_old_data()
+
     logger = get_logger(__name__)
     logger.info(f"Starting {APP_NAME} v{__version__}")
 

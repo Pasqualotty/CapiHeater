@@ -27,9 +27,13 @@ if getattr(sys, "frozen", False):
 else:
     BUNDLE_DIR = APP_DIR
 
+# User data directory — stored in AppData so updates never affect it
+_APPDATA = os.environ.get("APPDATA", os.path.expanduser("~"))
+DATA_DIR = os.path.join(_APPDATA, "CapiHeater", "data")
+os.makedirs(DATA_DIR, exist_ok=True)
+
 # Database
-DB_PATH = os.path.join(APP_DIR, "data", "capiheater.db")
-DATA_DIR = os.path.join(APP_DIR, "data")
+DB_PATH = os.path.join(DATA_DIR, "capiheater.db")
 
 
 def get_user_db_path(user_id: str) -> str:
@@ -40,8 +44,9 @@ def get_user_db_path(user_id: str) -> str:
 # Concurrency
 MAX_WORKERS = 3
 
-# Logging
-LOG_DIR = os.path.join(APP_DIR, "logs")
+# Logging — also in AppData
+LOG_DIR = os.path.join(_APPDATA, "CapiHeater", "logs")
+os.makedirs(LOG_DIR, exist_ok=True)
 LOG_FILE = os.path.join(LOG_DIR, "capiheater.log")
 LOG_LEVEL = "INFO"
 LOG_MAX_BYTES = 5 * 1024 * 1024  # 5 MB
