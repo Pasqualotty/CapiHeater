@@ -29,6 +29,13 @@ else:
 
 # Database
 DB_PATH = os.path.join(APP_DIR, "data", "capiheater.db")
+DATA_DIR = os.path.join(APP_DIR, "data")
+
+
+def get_user_db_path(user_id: str) -> str:
+    """Return a per-user database path based on the user's ID."""
+    safe_id = user_id.replace("-", "")[:16]
+    return os.path.join(DATA_DIR, f"capiheater_{safe_id}.db")
 
 # Concurrency
 MAX_WORKERS = 3

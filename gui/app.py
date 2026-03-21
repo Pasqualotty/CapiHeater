@@ -3,15 +3,16 @@ CapiHeaterApp - Main application window.
 """
 
 import tkinter as tk
-from tkinter import ttk
+from tkinter import ttk, messagebox
 from queue import Queue
+import threading
 
 from version import __version__
 from database.db import Database
 from core.engine import Engine
 from core.account_manager import AccountManager
 from core.target_manager import TargetManager
-from utils.config import DB_PATH, APP_NAME
+from utils.config import DB_PATH, APP_NAME, get_user_db_path
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -57,7 +58,15 @@ class CapiHeaterApp:
         self._center_window(1100, 700)
 
         # ---- Backend services ----
-        self.db = Database(DB_PATH)
+        # Use per-user database if logged in, otherwise default
+        db_path = DB_PATH
+        if auth_session:
+            session = auth_session.get("session")
+            if session and hasattr(session, "user") and session.user:
+                db_path = get_user_db_path(str(session.user.id))
+                logger.info(f"Using per-user database: {db_path}")
+
+        self.db = Database(db_path)
         self.db.init_db()
 
         self.message_queue: Queue = Queue()
@@ -78,15 +87,34 @@ class CapiHeaterApp:
         self._tabs: dict[str, ttk.Frame] = {}
         self._build_tabs()
 
-        # ---- Status bar ----
+        # ---- Status bar with logout button ----
+        status_frame = ttk.Frame(self.root, style="Dark.TFrame")
+        status_frame.pack(fill=tk.X, side=tk.BOTTOM, padx=4, pady=(0, 4))
+
         self._status_var = tk.StringVar(value="Pronto")
         self._status_bar = ttk.Label(
-            self.root,
+            status_frame,
             textvariable=self._status_var,
             style="StatusBar.TLabel",
             anchor=tk.W,
         )
-        self._status_bar.pack(fill=tk.X, side=tk.BOTTOM, padx=4, pady=(0, 4))
+        self._status_bar.pack(fill=tk.X, side=tk.LEFT, expand=True)
+
+        logout_btn = tk.Button(
+            status_frame,
+            text="Sair da Conta",
+            font=("Segoe UI", 8),
+            bg="#333355",
+            fg="#e0e0e0",
+            activebackground="#444466",
+            activeforeground="#ffffff",
+            relief="flat",
+            cursor="hand2",
+            padx=8,
+            pady=2,
+            command=self._on_logout,
+        )
+        logout_btn.pack(side=tk.RIGHT, padx=(6, 0))
 
         # ---- Admin tab (conditional) ----
         if auth_session:
@@ -96,6 +124,9 @@ class CapiHeaterApp:
 
         # ---- Start polling ----
         self._poll_queue()
+
+        # ---- Auto-update check (after 3 s) ----
+        self.root.after(3000, self._check_update)
 
     # ==================================================================
     # Tab construction
@@ -130,23 +161,24 @@ class CapiHeaterApp:
 
     def add_admin_tab(self) -> None:
         """Dynamically add an Admin tab (for moderators/admins)."""
-        frame = ttk.Frame(self.notebook, style="Tab.TFrame")
-        lbl = ttk.Label(
-            frame,
-            text="Painel Administrativo",
-            style="Heading.TLabel",
-        )
-        lbl.pack(pady=20)
+        if not self.auth_session:
+            return
 
-        info = ttk.Label(
-            frame,
-            text="Funcionalidades administrativas em breve.",
-            style="Dark.TLabel",
-        )
-        info.pack()
+        try:
+            from gui.admin_tab import AdminTab
 
-        self.notebook.add(frame, text="  Admin  ")
-        self._tabs["Admin"] = frame
+            auth = self.auth_session.get("auth")
+            session = self.auth_session.get("session")
+            if not auth or not session:
+                return
+
+            frame = ttk.Frame(self.notebook, style="Tab.TFrame")
+            admin = AdminTab(frame, auth=auth, session=session)
+            admin.pack(fill=tk.BOTH, expand=True)
+            self.notebook.add(frame, text="  Admin  ")
+            self._tabs["Admin"] = admin
+        except Exception as exc:
+            logger.warning(f"Could not load admin tab: {exc}")
 
     # ==================================================================
     # Queue polling
@@ -208,6 +240,122 @@ class CapiHeaterApp:
                 tab.refresh()
         except Exception:
             pass
+
+    # ==================================================================
+    # Logout
+    # ==================================================================
+
+    def _on_logout(self) -> None:
+        """Log out: clear saved credentials, stop workers, and restart the app."""
+        from tkinter import messagebox
+        if not messagebox.askyesno("Sair", "Deseja sair da conta atual?"):
+            return
+
+        # Stop all workers
+        try:
+            self.engine.stop_all()
+        except Exception:
+            pass
+
+        # Clear saved credentials (remember-me)
+        import os
+        app_data = os.path.join(
+            os.environ.get("APPDATA", os.path.expanduser("~")), "CapiHeater"
+        )
+        for f in ("remember.dat", "rkey.dat"):
+            path = os.path.join(app_data, f)
+            if os.path.exists(path):
+                try:
+                    os.remove(path)
+                except Exception:
+                    pass
+
+        # Close the app — next time it opens, login screen will appear
+        from tkinter import messagebox as mb2
+        mb2.showinfo("Logout", "Voce foi desconectado.\nAbra o app novamente para fazer login.")
+        self.root.destroy()
+
+    # ==================================================================
+    # Auto-update
+    # ==================================================================
+
+    def _check_update(self) -> None:
+        """Run the update check in a background thread."""
+        threading.Thread(target=self._check_update_worker, daemon=True).start()
+
+    def _check_update_worker(self) -> None:
+        from utils.updater import AutoUpdater
+
+        updater = AutoUpdater()
+        try:
+            info = updater.check_for_update()
+        except Exception:
+            return
+        if info:
+            self.root.after(0, lambda: self._prompt_update(info))
+
+    def _prompt_update(self, info: dict) -> None:
+        version = info["version"]
+        notes = info.get("notes", "")
+        msg = f"Nova versao {version} disponivel!"
+        if notes:
+            msg += f"\n\n{notes}"
+        msg += "\n\nDeseja atualizar agora?"
+
+        if not messagebox.askyesno("Atualização", msg):
+            return
+
+        self._start_update_download(info["download_url"])
+
+    def _start_update_download(self, download_url: str) -> None:
+        # Build a small progress window
+        win = tk.Toplevel(self.root)
+        win.title("Atualizando...")
+        win.geometry("400x120")
+        win.resizable(False, False)
+        win.configure(bg=BG_DARK)
+        win.transient(self.root)
+        win.grab_set()
+
+        ttk.Label(
+            win, text="Baixando atualização...", style="Dark.TLabel",
+        ).pack(pady=(16, 4))
+
+        progress_var = tk.DoubleVar(value=0.0)
+        bar = ttk.Progressbar(
+            win,
+            variable=progress_var,
+            maximum=100,
+            mode="determinate",
+            style="Card.Horizontal.TProgressbar",
+            length=350,
+        )
+        bar.pack(pady=8)
+
+        def on_progress(downloaded: int, total: int) -> None:
+            if total > 0:
+                pct = downloaded / total * 100
+                self.root.after(0, lambda p=pct: progress_var.set(p))
+
+        def worker() -> None:
+            from utils.updater import AutoUpdater
+
+            updater = AutoUpdater()
+            try:
+                updater.download_and_apply(download_url, on_progress=on_progress)
+            except Exception as exc:
+                self.root.after(
+                    0,
+                    lambda: (
+                        win.destroy(),
+                        messagebox.showerror(
+                            "Erro",
+                            f"Falha ao baixar atualização:\n{exc}",
+                        ),
+                    ),
+                )
+
+        threading.Thread(target=worker, daemon=True).start()
 
     # ==================================================================
     # Public helpers

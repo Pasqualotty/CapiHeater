@@ -62,13 +62,33 @@ class SupabaseAuth:
             raise RuntimeError(f"Erro ao fazer login: {exc}") from exc
 
     def register(self, email: str, password: str):
-        """Create a new user account. Returns session or raises."""
+        """Create a new user account and an inactive license entry."""
         self._ensure_client()
         try:
             response = self._client.auth.sign_up(
                 {"email": email, "password": password}
             )
             self._session = response.session
+
+            # Create inactive license so the user appears in the Admin panel
+            user_id = None
+            if self._session and hasattr(self._session, "user"):
+                user_id = self._session.user.id
+            elif response.user:
+                user_id = response.user.id
+
+            if user_id:
+                try:
+                    self._client.table("licenses").insert({
+                        "user_id": str(user_id),
+                        "email": email,
+                        "role": "user",
+                        "is_active": False,
+                        "grant_reason": "registration",
+                    }).execute()
+                except Exception:
+                    pass  # License may already exist
+
             return self._session
         except Exception as exc:
             raise RuntimeError(f"Erro ao registrar: {exc}") from exc
@@ -125,21 +145,30 @@ class SupabaseAuth:
         return info.get("role", "user")
 
     def grant_access(self, email: str, granted_by_id: str, reason: str = ""):
-        """Activate/create a license for *email*."""
+        """Activate a license for *email*."""
         self._ensure_client()
         try:
             now = datetime.now(timezone.utc).isoformat()
-            # Upsert: activate if exists, insert otherwise
-            self._client.table("licenses").upsert(
-                {
-                    "email": email,
+            # Try to update existing license first
+            result = (
+                self._client.table("licenses")
+                .update({
                     "is_active": True,
                     "activated_at": now,
                     "granted_by": granted_by_id,
-                    "grant_reason": reason,
-                },
-                on_conflict="email",
-            ).execute()
+                    "grant_reason": reason or "manual_grant",
+                })
+                .eq("email", email)
+                .execute()
+            )
+            # If no rows updated, the user hasn't registered yet
+            if not result.data:
+                raise RuntimeError(
+                    f"Usuario {email} nao encontrado. "
+                    "O usuario precisa se registrar primeiro."
+                )
+        except RuntimeError:
+            raise
         except Exception as exc:
             raise RuntimeError(f"Erro ao liberar acesso: {exc}") from exc
 
