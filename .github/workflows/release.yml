@@ -1,0 +1,43 @@
+name: Build & Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Build .exe with PyInstaller
+        run: pyinstaller capiheater.spec
+
+      - name: Verify .exe exists
+        run: |
+          if (!(Test-Path "dist\CapiHeater.exe")) { throw "Build failed - .exe not found" }
+          $size = (Get-Item "dist\CapiHeater.exe").Length / 1MB
+          Write-Host "CapiHeater.exe size: $([math]::Round($size, 2)) MB"
+
+      - name: Upload .exe as Release Asset
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/CapiHeater.exe
+          generate_release_notes: true

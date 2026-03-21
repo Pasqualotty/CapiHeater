@@ -1,0 +1,345 @@
+"""
+AccountsTab - CRUD interface for managing Twitter/X accounts.
+"""
+
+import json
+import tkinter as tk
+from tkinter import ttk, filedialog, messagebox
+from datetime import date
+
+
+class AccountsTab(ttk.Frame):
+    """Accounts management tab with treeview table and CRUD dialogs.
+
+    Parameters
+    ----------
+    parent : tk.Widget
+        Parent frame (notebook tab container).
+    app : CapiHeaterApp
+        Reference to the main application instance.
+    """
+
+    def __init__(self, parent, app, **kwargs):
+        super().__init__(parent, style="Tab.TFrame", **kwargs)
+        self.app = app
+        self._build_ui()
+        self.refresh()
+
+    # ==================================================================
+    # UI
+    # ==================================================================
+
+    def _build_ui(self) -> None:
+        # ---------- Toolbar ----------
+        toolbar = ttk.Frame(self, style="Dark.TFrame")
+        toolbar.pack(fill=tk.X, padx=12, pady=(12, 6))
+
+        ttk.Label(toolbar, text="Gerenciamento de Contas", style="Heading.TLabel").pack(side=tk.LEFT)
+
+        btn_frame = ttk.Frame(toolbar, style="Dark.TFrame")
+        btn_frame.pack(side=tk.RIGHT)
+
+        ttk.Button(btn_frame, text="Adicionar Conta", style="Accent.TButton", command=self._add_account_dialog).pack(side=tk.LEFT, padx=(0, 6))
+        ttk.Button(btn_frame, text="Editar", style="Accent.TButton", command=self._edit_account_dialog).pack(side=tk.LEFT, padx=(0, 6))
+        ttk.Button(btn_frame, text="Excluir", style="Danger.TButton", command=self._delete_account).pack(side=tk.LEFT, padx=(0, 6))
+        ttk.Button(btn_frame, text="Importar Cookies", style="Accent.TButton", command=self._import_cookies).pack(side=tk.LEFT)
+
+        # ---------- Treeview ----------
+        tree_frame = ttk.Frame(self, style="Dark.TFrame")
+        tree_frame.pack(fill=tk.BOTH, expand=True, padx=12, pady=(6, 12))
+
+        columns = ("username", "status", "schedule", "dia", "proxy", "start_date")
+        self._tree = ttk.Treeview(
+            tree_frame,
+            columns=columns,
+            show="headings",
+            style="Dark.Treeview",
+            selectmode="browse",
+        )
+
+        self._tree.heading("username", text="Usuario")
+        self._tree.heading("status", text="Status")
+        self._tree.heading("schedule", text="Cronograma")
+        self._tree.heading("dia", text="Dia")
+        self._tree.heading("proxy", text="Proxy")
+        self._tree.heading("start_date", text="Data Inicio")
+
+        self._tree.column("username", width=160, anchor=tk.W)
+        self._tree.column("status", width=100, anchor=tk.CENTER)
+        self._tree.column("schedule", width=140, anchor=tk.CENTER)
+        self._tree.column("dia", width=60, anchor=tk.CENTER)
+        self._tree.column("proxy", width=180, anchor=tk.W)
+        self._tree.column("start_date", width=110, anchor=tk.CENTER)
+
+        scrollbar = ttk.Scrollbar(tree_frame, orient=tk.VERTICAL, command=self._tree.yview)
+        self._tree.configure(yscrollcommand=scrollbar.set)
+        self._tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        # Store mapping iid -> account_id
+        self._row_map: dict[str, int] = {}
+
+    # ==================================================================
+    # Data
+    # ==================================================================
+
+    def refresh(self) -> None:
+        """Reload accounts from the database into the treeview."""
+        self._tree.delete(*self._tree.get_children())
+        self._row_map.clear()
+
+        accounts = self.app.account_manager.get_all_accounts()
+        schedules = self._get_schedule_names()
+
+        for acc in accounts:
+            sched_name = schedules.get(acc.get("schedule_id", 1), "Padrao")
+            status_label = self._status_label(acc.get("status", "idle"))
+            proxy = acc.get("proxy") or "—"
+            iid = self._tree.insert(
+                "",
+                tk.END,
+                values=(
+                    f"@{acc.get('username', '???')}",
+                    status_label,
+                    sched_name,
+                    acc.get("current_day", 1),
+                    proxy,
+                    acc.get("start_date", ""),
+                ),
+            )
+            self._row_map[iid] = acc["id"]
+
+    def _get_schedule_names(self) -> dict[int, str]:
+        rows = self.app.db.fetch_all("SELECT id, name FROM schedules ORDER BY id")
+        return {r["id"]: r["name"] for r in rows}
+
+    def _get_selected_id(self) -> int | None:
+        sel = self._tree.selection()
+        if not sel:
+            return None
+        return self._row_map.get(sel[0])
+
+    # ==================================================================
+    # Dialogs
+    # ==================================================================
+
+    def _add_account_dialog(self) -> None:
+        self._open_account_form(title="Adicionar Conta", account=None)
+
+    def _edit_account_dialog(self) -> None:
+        aid = self._get_selected_id()
+        if aid is None:
+            messagebox.showwarning("Aviso", "Selecione uma conta para editar.", parent=self)
+            return
+        account = self.app.account_manager.get_account(aid)
+        if account is None:
+            return
+        self._open_account_form(title="Editar Conta", account=account)
+
+    def _open_account_form(self, title: str, account: dict | None) -> None:
+        dlg = tk.Toplevel(self)
+        dlg.title(title)
+        dlg.geometry("460x420")
+        dlg.configure(bg="#1a1a2e")
+        dlg.resizable(False, False)
+        dlg.grab_set()
+
+        pad = {"padx": 12, "pady": 4}
+
+        # Username
+        ttk.Label(dlg, text="Usuario (sem @):", style="Dark.TLabel").pack(anchor=tk.W, **pad)
+        ent_user = ttk.Entry(dlg, style="Dark.TEntry", width=40)
+        ent_user.pack(**pad)
+        if account:
+            ent_user.insert(0, account.get("username", ""))
+
+        # Cookies file
+        ttk.Label(dlg, text="Arquivo de Cookies (.json / .txt):", style="Dark.TLabel").pack(anchor=tk.W, **pad)
+        cookie_frame = ttk.Frame(dlg, style="Dark.TFrame")
+        cookie_frame.pack(fill=tk.X, **pad)
+
+        cookie_var = tk.StringVar()
+        ent_cookie = ttk.Entry(cookie_frame, textvariable=cookie_var, style="Dark.TEntry", width=32)
+        ent_cookie.pack(side=tk.LEFT, padx=(0, 4))
+
+        def browse_cookies():
+            path = filedialog.askopenfilename(
+                title="Selecionar arquivo de cookies",
+                filetypes=[("JSON", "*.json"), ("Netscape TXT", "*.txt"), ("Todos", "*.*")],
+                parent=dlg,
+            )
+            if path:
+                cookie_var.set(path)
+
+        ttk.Button(cookie_frame, text="Procurar...", command=browse_cookies).pack(side=tk.LEFT)
+
+        # Proxy
+        ttk.Label(dlg, text="Proxy (opcional):", style="Dark.TLabel").pack(anchor=tk.W, **pad)
+        ent_proxy = ttk.Entry(dlg, style="Dark.TEntry", width=40)
+        ent_proxy.pack(**pad)
+        if account and account.get("proxy"):
+            ent_proxy.insert(0, account["proxy"])
+
+        # Schedule dropdown
+        ttk.Label(dlg, text="Cronograma:", style="Dark.TLabel").pack(anchor=tk.W, **pad)
+        schedule_names = self._get_schedule_names()
+        schedule_list = list(schedule_names.values()) or ["Padrao"]
+        schedule_ids = list(schedule_names.keys()) or [1]
+        combo_sched = ttk.Combobox(dlg, values=schedule_list, state="readonly", style="Dark.TCombobox", width=37)
+        combo_sched.pack(**pad)
+        if account:
+            idx = schedule_ids.index(account.get("schedule_id", 1)) if account.get("schedule_id", 1) in schedule_ids else 0
+            combo_sched.current(idx)
+        elif schedule_list:
+            combo_sched.current(0)
+
+        # Notes
+        ttk.Label(dlg, text="Notas:", style="Dark.TLabel").pack(anchor=tk.W, **pad)
+        txt_notes = tk.Text(dlg, height=3, width=40, bg="#0d1b2a", fg="#e0e0e0", insertbackground="#e0e0e0", relief="flat")
+        txt_notes.pack(**pad)
+        if account and account.get("notes"):
+            txt_notes.insert("1.0", account["notes"])
+
+        # Save button
+        def save():
+            username = ent_user.get().strip().lstrip("@")
+            if not username:
+                messagebox.showerror("Erro", "O nome de usuario e obrigatorio.", parent=dlg)
+                return
+
+            proxy = ent_proxy.get().strip() or None
+            sched_idx = combo_sched.current()
+            sched_id = schedule_ids[sched_idx] if sched_idx >= 0 else 1
+            notes = txt_notes.get("1.0", tk.END).strip()
+
+            if account:
+                # Edit mode
+                updates = {
+                    "username": username,
+                    "proxy": proxy,
+                    "schedule_id": sched_id,
+                    "notes": notes,
+                }
+                cookie_path = cookie_var.get().strip()
+                if cookie_path:
+                    cookies = self._load_cookies(cookie_path)
+                    if cookies is not None:
+                        updates["cookies_json"] = cookies
+                self.app.account_manager.update_account(account["id"], **updates)
+                self.app.set_status(f"Conta @{username} atualizada")
+            else:
+                # Add mode
+                cookie_path = cookie_var.get().strip()
+                if not cookie_path:
+                    messagebox.showerror("Erro", "Selecione o arquivo de cookies.", parent=dlg)
+                    return
+                cookies = self._load_cookies(cookie_path)
+                if cookies is None:
+                    messagebox.showerror("Erro", "Falha ao carregar cookies.", parent=dlg)
+                    return
+                self.app.account_manager.add_account(
+                    username=username,
+                    cookies_json=cookies,
+                    proxy=proxy,
+                    schedule_id=sched_id,
+                    start_date=date.today().isoformat(),
+                )
+                self.app.set_status(f"Conta @{username} adicionada")
+
+            dlg.destroy()
+            self.refresh()
+
+        ttk.Button(dlg, text="Salvar", style="Accent.TButton", command=save).pack(pady=12)
+
+    # ==================================================================
+    # Actions
+    # ==================================================================
+
+    def _delete_account(self) -> None:
+        aid = self._get_selected_id()
+        if aid is None:
+            messagebox.showwarning("Aviso", "Selecione uma conta para excluir.", parent=self)
+            return
+        if not messagebox.askyesno("Confirmar", "Tem certeza que deseja excluir esta conta?", parent=self):
+            return
+        self.app.account_manager.delete_account(aid)
+        self.app.set_status("Conta excluida")
+        self.refresh()
+
+    def _import_cookies(self) -> None:
+        """Import cookies from a file and assign to selected account."""
+        aid = self._get_selected_id()
+        if aid is None:
+            messagebox.showwarning("Aviso", "Selecione uma conta para importar cookies.", parent=self)
+            return
+
+        path = filedialog.askopenfilename(
+            title="Selecionar arquivo de cookies",
+            filetypes=[("JSON", "*.json"), ("Netscape TXT", "*.txt"), ("Todos", "*.*")],
+            parent=self,
+        )
+        if not path:
+            return
+
+        cookies = self._load_cookies(path)
+        if cookies is None:
+            messagebox.showerror("Erro", "Falha ao carregar cookies do arquivo.", parent=self)
+            return
+
+        self.app.account_manager.update_account(aid, cookies_json=cookies)
+        self.app.set_status("Cookies importados com sucesso")
+        self.refresh()
+
+    # ==================================================================
+    # Helpers
+    # ==================================================================
+
+    @staticmethod
+    def _load_cookies(filepath: str) -> str | None:
+        """Load cookies from a JSON or Netscape TXT file.
+
+        Returns the cookies as a JSON string, or None on failure.
+        """
+        try:
+            with open(filepath, "r", encoding="utf-8") as f:
+                content = f.read().strip()
+
+            # Try JSON first
+            if content.startswith("[") or content.startswith("{"):
+                data = json.loads(content)
+                return json.dumps(data)
+
+            # Netscape/Mozilla cookie TXT format
+            cookies = []
+            for line in content.splitlines():
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                parts = line.split("\t")
+                if len(parts) >= 7:
+                    cookies.append({
+                        "domain": parts[0],
+                        "httpOnly": parts[1].upper() == "TRUE",
+                        "path": parts[2],
+                        "secure": parts[3].upper() == "TRUE",
+                        "expiry": int(parts[4]) if parts[4].isdigit() else 0,
+                        "name": parts[5],
+                        "value": parts[6],
+                    })
+            if cookies:
+                return json.dumps(cookies)
+
+            return None
+        except Exception:
+            return None
+
+    @staticmethod
+    def _status_label(status: str) -> str:
+        mapping = {
+            "running": "Rodando",
+            "paused": "Pausado",
+            "error": "Erro",
+            "idle": "Parado",
+            "completed": "Concluido",
+        }
+        return mapping.get(status, status.capitalize())
