@@ -652,6 +652,12 @@ class TwitterWorker(BaseWorker):
             self._log_activity("sistema", "success", error_message=f"Plano do dia: {plan}")
             logger.info(f"[{username}] Today's plan: {actions}")
 
+            # Log targets loaded for this account (for category debugging)
+            target_names = [t.get("username", "?") for t in self.targets]
+            self._log_activity("sistema", "success",
+                               error_message=f"Alvos carregados ({len(self.targets)}): {', '.join(target_names[:20])}")
+            logger.info(f"[{username}] Targets loaded: {target_names}")
+
             # 2. Launch browser
             self._create_browser()
             self._send("status", status="running")
