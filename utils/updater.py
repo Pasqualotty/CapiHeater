@@ -124,17 +124,14 @@ class AutoUpdater:
         # Where is the currently running exe?
         current_exe = sys.executable
         if not getattr(sys, "frozen", False):
-            # During development the script is run via python.exe.
-            # We still allow testing, but the batch-replace step would be
-            # a no-op.
             logger.warning(
                 "Not running as a frozen exe — update will download "
                 "but skip the replacement step."
             )
 
-        # Download to a temp file next to the current exe so the later
-        # rename stays on the same filesystem.
+        # Always target the canonical exe name so temp files don't accumulate.
         exe_dir = os.path.dirname(os.path.abspath(current_exe))
+        current_exe = os.path.join(exe_dir, "CapiHeater.exe")
         fd, tmp_path = tempfile.mkstemp(suffix=".exe", dir=exe_dir)
         os.close(fd)
 
