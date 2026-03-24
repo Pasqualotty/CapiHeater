@@ -99,6 +99,7 @@ class BrowseFeedAction:
         posts_to_open: int = 0,
         view_comments_chance: float = 0.3,
         stop_check=None,
+        on_event=None,
     ) -> dict:
         """Browse the feed for *duration_minutes*.
 
@@ -123,6 +124,8 @@ class BrowseFeedAction:
         drv = driver or self.driver
         scrolls = 0
         posts_opened = 0
+        comments_viewed = 0
+        self._on_event = on_event
         start = time.time()
         duration_secs = duration_minutes * 60
 
@@ -146,6 +149,7 @@ class BrowseFeedAction:
                 "success": False,
                 "scrolls": 0,
                 "posts_opened": 0,
+                "comments_viewed": 0,
                 "duration_seconds": 0,
             }
 
@@ -163,8 +167,14 @@ class BrowseFeedAction:
             # Should we open a post now? (time-based scheduling)
             if open_at_times and elapsed >= open_at_times[0]:
                 open_at_times.pop(0)
-                if self._open_and_read_post(drv, view_comments_chance, stop_check):
+                result = self._open_and_read_post(
+                    drv, view_comments_chance, stop_check,
+                    post_number=posts_opened + 1, total_posts=posts_to_open,
+                )
+                if result:
                     posts_opened += 1
+                    if isinstance(result, dict):
+                        comments_viewed += result.get("comments", 0)
 
                 # After returning from a post the feed may have shifted;
                 # snap back to a tweet.
@@ -222,21 +232,38 @@ class BrowseFeedAction:
 
         elapsed = time.time() - start
         self.logger.info(
-            "Browse concluido: %d scrolls, %d posts abertos em %.0f segundos",
+            "Browse concluido: %d scrolls, %d posts abertos, %d comentarios vistos em %.0f segundos",
             scrolls,
             posts_opened,
+            comments_viewed,
             elapsed,
         )
+        self._emit("browse_summary", {
+            "posts_opened": posts_opened,
+            "comments_viewed": comments_viewed,
+            "scrolls": scrolls,
+            "duration_seconds": round(elapsed),
+        })
         return {
             "success": True,
             "scrolls": scrolls,
             "posts_opened": posts_opened,
+            "comments_viewed": comments_viewed,
             "duration_seconds": round(elapsed),
         }
 
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+
+    def _emit(self, event_type: str, data: dict) -> None:
+        """Send an event via the on_event callback if set."""
+        cb = getattr(self, "_on_event", None)
+        if cb:
+            try:
+                cb(event_type, data)
+            except Exception:
+                pass
 
     def _should_stop(self, stop_check) -> bool:
         return stop_check is not None and stop_check()
@@ -321,12 +348,13 @@ class BrowseFeedAction:
         return sorted(targets)
 
     def _open_and_read_post(
-        self, drv: WebDriver, view_comments_chance: float, stop_check
-    ) -> bool:
+        self, drv: WebDriver, view_comments_chance: float, stop_check,
+        post_number: int = 1, total_posts: int = 1,
+    ):
         """Click the centre tweet to open the full post view, read it,
         optionally scroll through comments, then navigate back.
 
-        Returns True if the post was successfully opened and read.
+        Returns a dict with ``{"comments": int}`` on success, or False on failure.
         """
         for attempt in range(2):  # Retry once if first attempt fails
             try:
@@ -362,7 +390,10 @@ class BrowseFeedAction:
                         continue
                     return False
 
-                self.logger.debug("Abrindo post para leitura...")
+                self.logger.info("Visualizando post %d/%d", post_number, total_posts)
+                self._emit("post_open", {
+                    "post_number": post_number, "total": total_posts,
+                })
                 ActionChains(drv).move_to_element(clickable).pause(
                     random.uniform(0.3, 0.8)
                 ).click().perform()
@@ -380,12 +411,16 @@ class BrowseFeedAction:
 
                 # "Read" the opened post.
                 read_time = random.uniform(5, 15)
-                self.logger.debug("Lendo post por %.1fs...", read_time)
+                self.logger.info("Lendo post %d por %.1fs...", post_number, read_time)
+                self._emit("post_read", {
+                    "post_number": post_number, "read_time": round(read_time, 1),
+                })
                 time.sleep(read_time)
 
                 # Optionally scroll through comments.
+                comments_seen = 0
                 if random.random() < view_comments_chance:
-                    self._view_comments(drv, stop_check)
+                    comments_seen = self._view_comments(drv, stop_check, post_number)
 
                 # Navigate back to the feed.
                 drv.back()
@@ -402,7 +437,7 @@ class BrowseFeedAction:
                     self.logger.debug("Timeline nao reapareceu apos voltar.")
 
                 random_delay(1.0, 2.5)
-                return True
+                return {"comments": comments_seen}
 
             except (
                 StaleElementReferenceException,
@@ -475,12 +510,16 @@ class BrowseFeedAction:
 
         return None
 
-    def _view_comments(self, drv: WebDriver, stop_check) -> None:
-        """Scroll down the post view to read a few comments/replies."""
-        num_comments = random.randint(3, 8)
-        self.logger.debug("Vendo ~%d comentarios...", num_comments)
+    def _view_comments(self, drv: WebDriver, stop_check, post_number: int = 1) -> int:
+        """Scroll down the post view to read a few comments/replies.
 
-        for _ in range(num_comments):
+        Returns the number of comments actually viewed.
+        """
+        num_comments = random.randint(3, 8)
+        self.logger.info("Visualizando ~%d comentarios do post %d...", num_comments, post_number)
+        viewed = 0
+
+        for i in range(num_comments):
             if self._should_stop(stop_check):
                 break
 
@@ -490,9 +529,20 @@ class BrowseFeedAction:
             # Snap to the nearest reply tweet.
             self._snap_to_nearest_tweet(drv)
 
+            viewed += 1
+            self.logger.info(
+                "Visualizando comentario %d/%d do post %d", viewed, num_comments, post_number
+            )
+            self._emit("comment_view", {
+                "comment_number": viewed,
+                "total": num_comments,
+                "post_number": post_number,
+            })
+
             # "Read" the comment.
             read_time = random.uniform(2.0, 6.0)
             time.sleep(read_time)
 
         # Small pause before going back.
         random_delay(1.0, 3.0)
+        return viewed

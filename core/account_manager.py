@@ -104,6 +104,19 @@ class AccountManager:
         """
         self.update_account(account_id, status=status)
 
+    def reset_schedule(self, account_id: int) -> None:
+        """Reset an account's schedule: set start_date to today, current_day to 1,
+        and clear its action history."""
+        today = date.today().isoformat()
+        self.db.execute(
+            "UPDATE accounts SET start_date = ?, current_day = 1, status = 'idle' WHERE id = ?",
+            (today, account_id),
+        )
+        self.db.execute(
+            "DELETE FROM action_history WHERE account_id = ?",
+            (account_id,),
+        )
+
     # ------------------------------------------------------------------
     # Delete
     # ------------------------------------------------------------------

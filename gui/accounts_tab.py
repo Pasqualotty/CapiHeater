@@ -44,6 +44,7 @@ class AccountsTab(ttk.Frame):
         ttk.Button(btn_frame, text="Excluir", style="Danger.TButton", command=self._delete_account).pack(side=tk.LEFT, padx=(0, 6))
         ttk.Button(btn_frame, text="Importar Cookies", style="Accent.TButton", command=self._import_cookies).pack(side=tk.LEFT, padx=(0, 6))
         ttk.Button(btn_frame, text="Importar em Massa", style="Accent.TButton", command=self._bulk_import).pack(side=tk.LEFT, padx=(0, 6))
+        ttk.Button(btn_frame, text="Reiniciar Cronograma", style="Danger.TButton", command=self._reset_schedule).pack(side=tk.LEFT, padx=(0, 6))
         ttk.Button(btn_frame, text="Categorias", style="Accent.TButton", command=self._manage_categories).pack(side=tk.LEFT)
 
         # ---------- Treeview ----------
@@ -290,6 +291,26 @@ class AccountsTab(ttk.Frame):
     # ==================================================================
     # Actions
     # ==================================================================
+
+    def _reset_schedule(self) -> None:
+        """Reset the selected account's schedule to day 1 (today)."""
+        aid = self._get_selected_id()
+        if aid is None:
+            messagebox.showwarning("Aviso", "Selecione uma conta para reiniciar o cronograma.", parent=self)
+            return
+        if not messagebox.askyesno(
+            "Reiniciar Cronograma",
+            "Isso vai:\n"
+            "- Definir a data de inicio como hoje\n"
+            "- Resetar o dia atual para 1\n"
+            "- Limpar o historico de acoes da conta\n\n"
+            "Tem certeza?",
+            parent=self,
+        ):
+            return
+        self.app.account_manager.reset_schedule(aid)
+        self.app.set_status("Cronograma reiniciado")
+        self.refresh()
 
     def _delete_account(self) -> None:
         aid = self._get_selected_id()

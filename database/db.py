@@ -121,6 +121,18 @@ class Database:
                 )
             """)
 
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS action_history (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    account_id INTEGER NOT NULL,
+                    target_username TEXT NOT NULL,
+                    action_type TEXT NOT NULL,
+                    schedule_day INTEGER NOT NULL,
+                    executed_at TEXT DEFAULT (datetime('now')),
+                    FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE
+                )
+            """)
+
             # Insert default schedules if none exist
             cursor.execute("SELECT COUNT(*) FROM schedules")
             if cursor.fetchone()[0] == 0:

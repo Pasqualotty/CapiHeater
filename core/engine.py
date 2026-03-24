@@ -129,7 +129,9 @@ class Engine:
             logger.info(f"Stop signal sent to account {account_id}")
             self.account_manager.update_status(account_id, "idle")
         else:
-            logger.warning(f"No active worker for account {account_id}")
+            # Worker already dead but status may be stuck — reset to idle
+            self.account_manager.update_status(account_id, "idle")
+            logger.info(f"Worker already dead for account {account_id}, status reset to idle")
 
     def pause_account(self, account_id: int) -> None:
         """Pause a running worker."""
@@ -180,7 +182,8 @@ class Engine:
         for account_id, worker in worker_items:
             if worker.is_alive():
                 worker.stop()
-                self.account_manager.update_status(account_id, "idle")
+            # Always reset status — covers both alive and dead workers
+            self.account_manager.update_status(account_id, "idle")
 
         logger.info("Stop signal sent to all workers.")
 

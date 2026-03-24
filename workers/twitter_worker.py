@@ -88,6 +88,34 @@ class TwitterWorker(BaseWorker):
         except Exception:
             pass
 
+    def _record_action(self, target_username: str, action_type: str, day_number: int):
+        """Record an action in action_history to prevent repeats on the same day."""
+        if self.db is None:
+            return
+        try:
+            self.db.execute(
+                """INSERT INTO action_history
+                   (account_id, target_username, action_type, schedule_day)
+                   VALUES (?, ?, ?, ?)""",
+                (self.account["id"], target_username, action_type, day_number),
+            )
+        except Exception:
+            pass
+
+    def _get_acted_targets(self, action_type: str, day_number: int) -> set:
+        """Return set of target usernames already acted upon for this day."""
+        if self.db is None:
+            return set()
+        try:
+            rows = self.db.fetch_all(
+                """SELECT target_username FROM action_history
+                   WHERE account_id = ? AND action_type = ? AND schedule_day = ?""",
+                (self.account["id"], action_type, day_number),
+            )
+            return {r["target_username"] for r in rows}
+        except Exception:
+            return set()
+
     # ------------------------------------------------------------------
     # Browser helpers
     # ------------------------------------------------------------------
@@ -397,6 +425,7 @@ class TwitterWorker(BaseWorker):
                     done += 1
                     self._send("action_complete", action="follow", target=target_user, progress=done)
                     self._log_activity("follow", "success", target_username=target_user, target_url=f"https://x.com/{target_user}")
+                    self._record_action(target_user, "follow", getattr(self, "_current_day", 1))
                     logger.info(f"[{self.account['username']}] Followed @{target_user} ({done}/{count})")
                     time.sleep(random.uniform(1.5, 3.0))
                 else:
@@ -545,12 +574,28 @@ class TwitterWorker(BaseWorker):
                            error_message=f"Navegando feed por {duration_secs:.0f}s ({duration_min:.1f} min)")
         logger.info(f"[{self.account['username']}] Navegando pelo feed por {duration_secs:.0f}s ({duration_min:.1f} min)")
 
+        def _on_browse_event(event_type: str, data: dict):
+            """Callback for browse feed events — writes to activity_logs."""
+            if event_type == "post_open":
+                self._log_activity("browse", "success",
+                                   error_message=f"Visualizando post {data['post_number']}/{data['total']}")
+            elif event_type == "post_read":
+                self._log_activity("browse", "success",
+                                   error_message=f"Lendo post {data['post_number']} por {data['read_time']}s")
+            elif event_type == "comment_view":
+                self._log_activity("browse", "success",
+                                   error_message=f"Visualizando comentario {data['comment_number']}/{data['total']} do post {data['post_number']}")
+            elif event_type == "browse_summary":
+                self._log_activity("browse", "success",
+                                   error_message=f"Browse: {data['posts_opened']} posts abertos, {data['comments_viewed']} comentarios vistos, {data['scrolls']} scrolls")
+
         browser = BrowseFeedAction(self.driver, logger)
         browser.execute(
             duration_minutes=duration_min,
             stop_check=lambda: not self.should_continue(),
             posts_to_open=posts_to_open,
             view_comments_chance=view_comments_chance,
+            on_event=_on_browse_event,
         )
         self._log_activity("browse", "success", error_message="Navegacao do feed concluida")
 
@@ -612,6 +657,7 @@ class TwitterWorker(BaseWorker):
                             done += 1
                             self._send("action_complete", action="like", target=target_user, progress=done)
                             self._log_activity("like", "success", target_username=target_user, target_url=f"https://x.com/{target_user}")
+                            self._record_action(target_user, "like", getattr(self, "_current_day", 1))
                             logger.info(f"[{self.account['username']}] Like on @{target_user} profile {done}/{count}")
                             break
                         else:
@@ -645,18 +691,33 @@ class TwitterWorker(BaseWorker):
 
             # 1. Determine today's actions
             start_date = self.account.get("start_date")
+            day_number = Scheduler.get_day_number(start_date)
+            self._current_day = day_number
             actions = Scheduler.get_today_actions(self.schedule_json, start_date)
             self._send("schedule", actions=actions)
-            plan = (f"Likes: {actions.get('likes',0)}, Follows: {actions.get('follows',0)}, "
+            plan = (f"Dia {day_number} - Likes: {actions.get('likes',0)}, Follows: {actions.get('follows',0)}, "
                     f"Retweets: {actions.get('retweets',0)}, Unfollows: {actions.get('unfollows',0)}")
             self._log_activity("sistema", "success", error_message=f"Plano do dia: {plan}")
-            logger.info(f"[{username}] Today's plan: {actions}")
+            logger.info(f"[{username}] Day {day_number} plan: {actions}")
 
             # Log targets loaded for this account (for category debugging)
             target_names = [t.get("username", "?") for t in self.targets]
             self._log_activity("sistema", "success",
                                error_message=f"Alvos carregados ({len(self.targets)}): {', '.join(target_names[:20])}")
             logger.info(f"[{username}] Targets loaded: {target_names}")
+
+            # Filter out targets already acted upon today
+            acted_follows = self._get_acted_targets("follow", day_number)
+            acted_likes = self._get_acted_targets("like", day_number)
+            acted = acted_follows | acted_likes
+            if acted:
+                before = len(self.targets)
+                self.targets = [t for t in self.targets if t.get("username", "").lstrip("@") not in acted]
+                filtered = before - len(self.targets)
+                if filtered > 0:
+                    self._log_activity("sistema", "success",
+                                       error_message=f"{filtered} alvos filtrados (ja agidos no dia {day_number})")
+                    logger.info(f"[{username}] Filtered {filtered} already-acted targets")
 
             # 2. Launch browser
             self._create_browser()
@@ -753,15 +814,34 @@ class TwitterWorker(BaseWorker):
 
             # 6. Done
             summary = ", ".join(f"{k}: {v}" for k, v in results.items())
-            self._log_activity("sistema", "success", error_message=f"Concluido - {summary}")
+            self._log_activity("sistema", "success", error_message=f"Concluido dia {day_number} - {summary}")
             self._send("status", status="completed", results=results)
-            logger.info(f"[{username}] Worker completed: {results}")
+            logger.info(f"[{username}] Worker completed day {day_number}: {results}")
+
+            # Update current_day and status in the database
+            if self.db:
+                try:
+                    self.db.execute(
+                        "UPDATE accounts SET current_day = ?, status = 'completed' WHERE id = ?",
+                        (day_number, account_id),
+                    )
+                except Exception:
+                    pass
 
         except Exception as exc:
             tb = traceback.format_exc()
             logger.error(f"[{username}] Worker error: {exc}\n{tb}")
             self._log_activity("sistema", "failed", error_message=str(exc))
             self._send("status", status="error", error=str(exc))
+            # Update status in the database so it doesn't stay stuck as "running"
+            if self.db:
+                try:
+                    self.db.execute(
+                        "UPDATE accounts SET status = 'error' WHERE id = ?",
+                        (account_id,),
+                    )
+                except Exception:
+                    pass
 
         finally:
             self._close_browser()
