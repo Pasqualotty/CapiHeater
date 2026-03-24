@@ -174,37 +174,46 @@ class AutoUpdater:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _apply_via_batch(current_exe: str, new_exe_tmp: str) -> None:
+    def _apply_via_batch(target_exe: str, new_exe_tmp: str) -> None:
         """Create and run a batch script that swaps executables."""
+        running_exe = os.path.abspath(sys.executable)
+        exe_dir = os.path.dirname(target_exe)
+
         bat_fd, bat_path = tempfile.mkstemp(suffix=".bat")
         os.close(bat_fd)
 
-        current_exe_esc = current_exe.replace("/", "\\")
-        new_exe_tmp_esc = new_exe_tmp.replace("/", "\\")
-        bat_path_esc = bat_path.replace("/", "\\")
+        target_esc = target_exe.replace("/", "\\")
+        new_tmp_esc = new_exe_tmp.replace("/", "\\")
+        running_esc = running_exe.replace("/", "\\")
+        bat_esc = bat_path.replace("/", "\\")
+        dir_esc = exe_dir.replace("/", "\\")
 
         script = (
             "@echo off\n"
             "echo Atualizando CapiHeater...\n"
-            # Wait a bit for the current process to fully exit
             "timeout /t 3 /nobreak >nul\n"
-            # Retry loop — the exe might still be locked briefly
+            # Wait for the running exe to be unlocked
             ":retry\n"
-            f'del /f "{current_exe_esc}" 2>nul\n'
-            f'if exist "{current_exe_esc}" (\n'
+            f'del /f "{running_esc}" 2>nul\n'
+            f'if exist "{running_esc}" (\n'
             "    timeout /t 1 /nobreak >nul\n"
             "    goto retry\n"
             ")\n"
-            f'move /y "{new_exe_tmp_esc}" "{current_exe_esc}"\n'
-            f'start "" "{current_exe_esc}"\n'
+            # Also delete the old target if different from running
+            f'del /f "{target_esc}" 2>nul\n'
+            # Move new download to the canonical name
+            f'move /y "{new_tmp_esc}" "{target_esc}"\n'
+            # Clean up any leftover tmp*.exe files in the directory
+            f'for %%F in ("{dir_esc}\\tmp*.exe") do del /f "%%F" 2>nul\n'
+            # Launch the updated exe
+            f'start "" "{target_esc}"\n'
             # Delete this batch script
-            f'del /f "{bat_path_esc}"\n'
+            f'del /f "{bat_esc}"\n'
         )
 
         with open(bat_path, "w", encoding="utf-8") as f:
             f.write(script)
 
-        # Launch the batch script detached and exit this process
         subprocess.Popen(
             ["cmd.exe", "/c", bat_path],
             creationflags=subprocess.CREATE_NEW_PROCESS_GROUP
