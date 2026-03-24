@@ -43,13 +43,14 @@ class AccountsTab(ttk.Frame):
         ttk.Button(btn_frame, text="Editar", style="Accent.TButton", command=self._edit_account_dialog).pack(side=tk.LEFT, padx=(0, 6))
         ttk.Button(btn_frame, text="Excluir", style="Danger.TButton", command=self._delete_account).pack(side=tk.LEFT, padx=(0, 6))
         ttk.Button(btn_frame, text="Importar Cookies", style="Accent.TButton", command=self._import_cookies).pack(side=tk.LEFT, padx=(0, 6))
-        ttk.Button(btn_frame, text="Importar em Massa", style="Accent.TButton", command=self._bulk_import).pack(side=tk.LEFT)
+        ttk.Button(btn_frame, text="Importar em Massa", style="Accent.TButton", command=self._bulk_import).pack(side=tk.LEFT, padx=(0, 6))
+        ttk.Button(btn_frame, text="Categorias", style="Accent.TButton", command=self._manage_categories).pack(side=tk.LEFT)
 
         # ---------- Treeview ----------
         tree_frame = ttk.Frame(self, style="Dark.TFrame")
         tree_frame.pack(fill=tk.BOTH, expand=True, padx=12, pady=(6, 12))
 
-        columns = ("username", "status", "schedule", "dia", "proxy", "start_date")
+        columns = ("username", "status", "schedule", "categoria", "dia", "proxy", "start_date")
         self._tree = ttk.Treeview(
             tree_frame,
             columns=columns,
@@ -61,16 +62,18 @@ class AccountsTab(ttk.Frame):
         self._tree.heading("username", text="Usuario")
         self._tree.heading("status", text="Status")
         self._tree.heading("schedule", text="Cronograma")
+        self._tree.heading("categoria", text="Categoria")
         self._tree.heading("dia", text="Dia")
         self._tree.heading("proxy", text="Proxy")
         self._tree.heading("start_date", text="Data Inicio")
 
-        self._tree.column("username", width=160, anchor=tk.W)
-        self._tree.column("status", width=100, anchor=tk.CENTER)
-        self._tree.column("schedule", width=140, anchor=tk.CENTER)
-        self._tree.column("dia", width=60, anchor=tk.CENTER)
-        self._tree.column("proxy", width=180, anchor=tk.W)
-        self._tree.column("start_date", width=110, anchor=tk.CENTER)
+        self._tree.column("username", width=140, anchor=tk.W)
+        self._tree.column("status", width=80, anchor=tk.CENTER)
+        self._tree.column("schedule", width=120, anchor=tk.CENTER)
+        self._tree.column("categoria", width=120, anchor=tk.CENTER)
+        self._tree.column("dia", width=50, anchor=tk.CENTER)
+        self._tree.column("proxy", width=150, anchor=tk.W)
+        self._tree.column("start_date", width=100, anchor=tk.CENTER)
 
         scrollbar = ttk.Scrollbar(tree_frame, orient=tk.VERTICAL, command=self._tree.yview)
         self._tree.configure(yscrollcommand=scrollbar.set)
@@ -91,11 +94,14 @@ class AccountsTab(ttk.Frame):
 
         accounts = self.app.account_manager.get_all_accounts()
         schedules = self._get_schedule_names()
+        cat_mgr = self.app.category_manager
 
         for acc in accounts:
             sched_name = schedules.get(acc.get("schedule_id", 1), "Padrao")
             status_label = self._status_label(acc.get("status", "idle"))
             proxy = acc.get("proxy") or "—"
+            cat_names = cat_mgr.get_account_category_names(acc["id"])
+            cat_label = ", ".join(cat_names) if cat_names else "—"
             iid = self._tree.insert(
                 "",
                 tk.END,
@@ -103,6 +109,7 @@ class AccountsTab(ttk.Frame):
                     f"@{acc.get('username', '???')}",
                     status_label,
                     sched_name,
+                    cat_label,
                     acc.get("current_day", 1),
                     proxy,
                     acc.get("start_date", ""),
@@ -140,7 +147,7 @@ class AccountsTab(ttk.Frame):
     def _open_account_form(self, title: str, account: dict | None) -> None:
         dlg = tk.Toplevel(self)
         dlg.title(title)
-        dlg.geometry("460x420")
+        dlg.geometry("460x520")
         dlg.configure(bg="#1a1a2e")
         dlg.resizable(False, False)
         dlg.grab_set()
@@ -194,6 +201,28 @@ class AccountsTab(ttk.Frame):
         elif schedule_list:
             combo_sched.current(0)
 
+        # Categories (multi-select listbox)
+        ttk.Label(dlg, text="Categorias (Ctrl+clique para multiplas):", style="Dark.TLabel").pack(anchor=tk.W, **pad)
+        cat_names = self.app.category_manager.get_category_names()
+        cat_list = list(cat_names.values())
+        cat_ids = list(cat_names.keys())
+
+        cat_listbox = tk.Listbox(
+            dlg, selectmode=tk.MULTIPLE, height=4, width=40,
+            bg="#0d1b2a", fg="#e0e0e0", selectbackground="#1a73e8",
+            relief="flat", highlightthickness=0,
+        )
+        cat_listbox.pack(**pad)
+        for name in cat_list:
+            cat_listbox.insert(tk.END, name)
+
+        # Pre-select existing categories
+        if account:
+            existing_cats = set(self.app.category_manager.get_account_categories(account["id"]))
+            for i, cid in enumerate(cat_ids):
+                if cid in existing_cats:
+                    cat_listbox.selection_set(i)
+
         # Notes
         ttk.Label(dlg, text="Notas:", style="Dark.TLabel").pack(anchor=tk.W, **pad)
         txt_notes = tk.Text(dlg, height=3, width=40, bg="#0d1b2a", fg="#e0e0e0", insertbackground="#e0e0e0", relief="flat")
@@ -213,6 +242,9 @@ class AccountsTab(ttk.Frame):
             sched_id = schedule_ids[sched_idx] if sched_idx >= 0 else 1
             notes = txt_notes.get("1.0", tk.END).strip()
 
+            # Get selected categories
+            selected_cat_ids = [cat_ids[i] for i in cat_listbox.curselection()]
+
             if account:
                 # Edit mode
                 updates = {
@@ -227,6 +259,7 @@ class AccountsTab(ttk.Frame):
                     if cookies is not None:
                         updates["cookies_json"] = cookies
                 self.app.account_manager.update_account(account["id"], **updates)
+                self.app.category_manager.set_account_categories(account["id"], selected_cat_ids)
                 self.app.set_status(f"Conta @{username} atualizada")
             else:
                 # Add mode
@@ -238,13 +271,15 @@ class AccountsTab(ttk.Frame):
                 if cookies is None:
                     messagebox.showerror("Erro", "Falha ao carregar cookies.", parent=dlg)
                     return
-                self.app.account_manager.add_account(
+                new_id = self.app.account_manager.add_account(
                     username=username,
                     cookies_json=cookies,
                     proxy=proxy,
                     schedule_id=sched_id,
                     start_date=date.today().isoformat(),
                 )
+                if selected_cat_ids:
+                    self.app.category_manager.set_account_categories(new_id, selected_cat_ids)
                 self.app.set_status(f"Conta @{username} adicionada")
 
             dlg.destroy()
@@ -359,6 +394,81 @@ class AccountsTab(ttk.Frame):
         messagebox.showinfo("Importacao em Massa", "\n".join(lines), parent=self)
         self.app.set_status(f"{len(successes)} conta(s) importada(s)")
         self.refresh()
+
+    # ==================================================================
+    # Category management dialog
+    # ==================================================================
+
+    def _manage_categories(self) -> None:
+        """Open a dialog to create and delete categories."""
+        dlg = tk.Toplevel(self)
+        dlg.title("Gerenciar Categorias")
+        dlg.geometry("380x400")
+        dlg.configure(bg="#1a1a2e")
+        dlg.resizable(False, False)
+        dlg.grab_set()
+
+        bg = "#1a1a2e"
+        fg = "#e0e0e0"
+
+        ttk.Label(dlg, text="Categorias", style="Heading.TLabel").pack(pady=(12, 6))
+
+        # Listbox
+        list_frame = tk.Frame(dlg, bg=bg)
+        list_frame.pack(fill=tk.BOTH, expand=True, padx=12, pady=4)
+
+        cat_listbox = tk.Listbox(
+            list_frame, bg="#0d1b2a", fg=fg, selectbackground="#1a73e8",
+            relief="flat", highlightthickness=0, font=("Segoe UI", 10),
+        )
+        cat_listbox.pack(fill=tk.BOTH, expand=True)
+
+        def refresh_list():
+            cat_listbox.delete(0, tk.END)
+            for cat in self.app.category_manager.get_all_categories():
+                cat_listbox.insert(tk.END, cat["name"])
+
+        refresh_list()
+
+        # Add section
+        add_frame = tk.Frame(dlg, bg=bg)
+        add_frame.pack(fill=tk.X, padx=12, pady=8)
+
+        ent_name = ttk.Entry(add_frame, style="Dark.TEntry", width=25)
+        ent_name.pack(side=tk.LEFT, padx=(0, 6))
+
+        def on_add():
+            name = ent_name.get().strip()
+            if not name:
+                return
+            try:
+                self.app.category_manager.add_category(name)
+                ent_name.delete(0, tk.END)
+                refresh_list()
+            except Exception:
+                messagebox.showerror("Erro", "Categoria ja existe ou nome invalido.", parent=dlg)
+
+        ttk.Button(add_frame, text="Adicionar", style="Accent.TButton", command=on_add).pack(side=tk.LEFT)
+
+        # Delete button
+        def on_delete():
+            sel = cat_listbox.curselection()
+            if not sel:
+                return
+            cats = self.app.category_manager.get_all_categories()
+            cat = cats[sel[0]]
+            if not messagebox.askyesno("Confirmar", f"Excluir categoria '{cat['name']}'?", parent=dlg):
+                return
+            self.app.category_manager.delete_category(cat["id"])
+            refresh_list()
+
+        ttk.Button(dlg, text="Excluir Selecionada", style="Danger.TButton", command=on_delete).pack(pady=(0, 12))
+
+        def on_close():
+            dlg.destroy()
+            self.refresh()
+
+        dlg.protocol("WM_DELETE_WINDOW", on_close)
 
     # ==================================================================
     # Helpers

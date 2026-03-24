@@ -93,6 +93,34 @@ class Database:
                 )
             """)
 
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS categories (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL UNIQUE,
+                    created_at TEXT DEFAULT (datetime('now'))
+                )
+            """)
+
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS account_categories (
+                    account_id INTEGER NOT NULL,
+                    category_id INTEGER NOT NULL,
+                    PRIMARY KEY (account_id, category_id),
+                    FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE,
+                    FOREIGN KEY (category_id) REFERENCES categories(id) ON DELETE CASCADE
+                )
+            """)
+
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS target_categories (
+                    target_id INTEGER NOT NULL,
+                    category_id INTEGER NOT NULL,
+                    PRIMARY KEY (target_id, category_id),
+                    FOREIGN KEY (target_id) REFERENCES targets(id) ON DELETE CASCADE,
+                    FOREIGN KEY (category_id) REFERENCES categories(id) ON DELETE CASCADE
+                )
+            """)
+
             # Insert default schedules if none exist
             cursor.execute("SELECT COUNT(*) FROM schedules")
             if cursor.fetchone()[0] == 0:

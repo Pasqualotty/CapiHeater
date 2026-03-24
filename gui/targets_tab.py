@@ -48,13 +48,14 @@ class TargetsTab(ttk.Frame):
         ttk.Button(btn_frame, text="Editar", style="Accent.TButton", command=self._edit_dialog).pack(side=tk.LEFT, padx=(0, 6))
         ttk.Button(btn_frame, text="Excluir", style="Danger.TButton", command=self._delete_targets).pack(side=tk.LEFT, padx=(0, 6))
         ttk.Button(btn_frame, text="Alternar Ativo", style="Accent.TButton", command=self._toggle_active).pack(side=tk.LEFT, padx=(0, 6))
-        ttk.Button(btn_frame, text="Abrir Perfil", style="Accent.TButton", command=self._open_profile).pack(side=tk.LEFT)
+        ttk.Button(btn_frame, text="Abrir Perfil", style="Accent.TButton", command=self._open_profile).pack(side=tk.LEFT, padx=(0, 6))
+        ttk.Button(btn_frame, text="Categorias", style="Accent.TButton", command=self._manage_categories).pack(side=tk.LEFT)
 
         # Treeview — extended selection for multi-select
         tree_frame = ttk.Frame(self, style="Dark.TFrame")
         tree_frame.pack(fill=tk.BOTH, expand=True, padx=12, pady=(6, 12))
 
-        columns = ("username", "url", "priority", "active")
+        columns = ("username", "url", "priority", "categoria", "active")
         self._tree = ttk.Treeview(
             tree_frame,
             columns=columns,
@@ -66,12 +67,14 @@ class TargetsTab(ttk.Frame):
         self._tree.heading("username", text="Usuario")
         self._tree.heading("url", text="URL")
         self._tree.heading("priority", text="Prioridade")
+        self._tree.heading("categoria", text="Categoria")
         self._tree.heading("active", text="Ativo")
 
-        self._tree.column("username", width=160, anchor=tk.W)
-        self._tree.column("url", width=320, anchor=tk.W)
-        self._tree.column("priority", width=100, anchor=tk.CENTER)
-        self._tree.column("active", width=80, anchor=tk.CENTER)
+        self._tree.column("username", width=140, anchor=tk.W)
+        self._tree.column("url", width=260, anchor=tk.W)
+        self._tree.column("priority", width=80, anchor=tk.CENTER)
+        self._tree.column("categoria", width=120, anchor=tk.CENTER)
+        self._tree.column("active", width=60, anchor=tk.CENTER)
 
         # Double-click opens profile
         self._tree.bind("<Double-1>", lambda _e: self._open_profile())
@@ -107,9 +110,12 @@ class TargetsTab(ttk.Frame):
         self._url_map.clear()
 
         targets = self.app.target_manager.get_targets(active_only=False)
+        cat_mgr = self.app.category_manager
         for t in targets:
             priority_label = PRIORITY_LABELS.get(t.get("priority", 1), "Baixa")
             active_label = "Sim" if t.get("active", 1) else "Nao"
+            cat_names = cat_mgr.get_target_category_names(t["id"])
+            cat_label = ", ".join(cat_names) if cat_names else "—"
             iid = self._tree.insert(
                 "",
                 tk.END,
@@ -117,6 +123,7 @@ class TargetsTab(ttk.Frame):
                     f"@{t.get('username', '???')}",
                     t.get("url", ""),
                     priority_label,
+                    cat_label,
                     active_label,
                 ),
             )
@@ -211,14 +218,24 @@ class TargetsTab(ttk.Frame):
         tk.Label(dlg, text="Exemplos aceitos:\nhttps://x.com/usuario\nhttps://twitter.com/usuario\n@usuario\nusuario",
                  font=("Segoe UI", 8), bg=bg, fg="#666688", justify="left").pack(anchor="w", padx=20)
 
-        # Priority
-        prio_frame = tk.Frame(dlg, bg=bg)
-        prio_frame.pack(fill=tk.X, padx=20, pady=(8, 4))
-        tk.Label(prio_frame, text="Prioridade:", font=("Segoe UI", 10), bg=bg, fg=fg).pack(side=tk.LEFT)
-        prio_combo = ttk.Combobox(prio_frame, values=["Baixa", "Media", "Alta"],
+        # Priority + Category row
+        opts_frame = tk.Frame(dlg, bg=bg)
+        opts_frame.pack(fill=tk.X, padx=20, pady=(8, 4))
+
+        tk.Label(opts_frame, text="Prioridade:", font=("Segoe UI", 10), bg=bg, fg=fg).pack(side=tk.LEFT)
+        prio_combo = ttk.Combobox(opts_frame, values=["Baixa", "Media", "Alta"],
                                    state="readonly", style="Dark.TCombobox", width=10)
-        prio_combo.pack(side=tk.LEFT, padx=(8, 0))
+        prio_combo.pack(side=tk.LEFT, padx=(8, 16))
         prio_combo.set("Alta")
+
+        tk.Label(opts_frame, text="Categoria:", font=("Segoe UI", 10), bg=bg, fg=fg).pack(side=tk.LEFT)
+        cat_names_map = self.app.category_manager.get_category_names()
+        cat_display = ["— Nenhuma —"] + list(cat_names_map.values())
+        cat_id_list = [None] + list(cat_names_map.keys())
+        cat_combo = ttk.Combobox(opts_frame, values=cat_display,
+                                  state="readonly", style="Dark.TCombobox", width=14)
+        cat_combo.pack(side=tk.LEFT, padx=(8, 0))
+        cat_combo.current(0)
 
         # Buttons
         btn_frame = tk.Frame(dlg, bg=bg)
@@ -231,6 +248,8 @@ class TargetsTab(ttk.Frame):
                 return
 
             priority = PRIORITY_VALUES.get(prio_combo.get(), 3)
+            cat_idx = cat_combo.current()
+            selected_cat_id = cat_id_list[cat_idx] if cat_idx >= 0 else None
             lines = [line.strip() for line in raw.splitlines() if line.strip()]
 
             added = 0
@@ -243,7 +262,9 @@ class TargetsTab(ttk.Frame):
 
                 url = f"https://x.com/{username}"
                 try:
-                    self.app.target_manager.add_target(username=username, url=url, priority=priority)
+                    new_id = self.app.target_manager.add_target(username=username, url=url, priority=priority)
+                    if selected_cat_id is not None:
+                        self.app.category_manager.set_target_categories(new_id, [selected_cat_id])
                     added += 1
                 except Exception:
                     skipped += 1  # Probably duplicate
@@ -305,7 +326,7 @@ class TargetsTab(ttk.Frame):
     def _open_target_form(self, title: str, target: dict | None) -> None:
         dlg = tk.Toplevel(self)
         dlg.title(title)
-        dlg.geometry("440x280")
+        dlg.geometry("440x400")
         dlg.configure(bg="#1a1a2e")
         dlg.resizable(False, False)
         dlg.grab_set()
@@ -338,11 +359,31 @@ class TargetsTab(ttk.Frame):
         )
         combo_prio.pack(**pad)
 
+        # Categories (multi-select)
+        ttk.Label(dlg, text="Categorias (Ctrl+clique para multiplas):", style="Dark.TLabel").pack(anchor=tk.W, **pad)
+        cat_names = self.app.category_manager.get_category_names()
+        cat_list = list(cat_names.values())
+        cat_ids = list(cat_names.keys())
+
+        cat_listbox = tk.Listbox(
+            dlg, selectmode=tk.MULTIPLE, height=4, width=40,
+            bg="#0d1b2a", fg="#e0e0e0", selectbackground="#1a73e8",
+            relief="flat", highlightthickness=0,
+        )
+        cat_listbox.pack(**pad)
+        for name in cat_list:
+            cat_listbox.insert(tk.END, name)
+
         if target:
             ent_user.insert(0, target.get("username", ""))
             ent_url.insert(0, target.get("url", ""))
             prio_label = PRIORITY_LABELS.get(target.get("priority", 1), "Baixa")
             combo_prio.set(prio_label)
+            # Pre-select existing categories
+            existing_cats = set(self.app.category_manager.get_target_categories(target["id"]))
+            for i, cid in enumerate(cat_ids):
+                if cid in existing_cats:
+                    cat_listbox.selection_set(i)
         else:
             combo_prio.current(0)
 
@@ -357,20 +398,96 @@ class TargetsTab(ttk.Frame):
                 url = f"https://x.com/{username}"
 
             priority = PRIORITY_VALUES.get(combo_prio.get(), 1)
+            selected_cat_ids = [cat_ids[i] for i in cat_listbox.curselection()]
 
             if target:
                 self.app.target_manager.update_target(
                     target["id"], username=username, url=url, priority=priority,
                 )
+                self.app.category_manager.set_target_categories(target["id"], selected_cat_ids)
                 self.app.set_status(f"Alvo @{username} atualizado")
             else:
-                self.app.target_manager.add_target(username=username, url=url, priority=priority)
+                new_id = self.app.target_manager.add_target(username=username, url=url, priority=priority)
+                if selected_cat_ids:
+                    self.app.category_manager.set_target_categories(new_id, selected_cat_ids)
                 self.app.set_status(f"Alvo @{username} adicionado")
 
             dlg.destroy()
             self.refresh()
 
         ttk.Button(dlg, text="Salvar", style="Accent.TButton", command=save).pack(pady=12)
+
+    # ==================================================================
+    # Category management dialog
+    # ==================================================================
+
+    def _manage_categories(self) -> None:
+        """Open a dialog to create and delete categories."""
+        dlg = tk.Toplevel(self)
+        dlg.title("Gerenciar Categorias")
+        dlg.geometry("380x400")
+        dlg.configure(bg="#1a1a2e")
+        dlg.resizable(False, False)
+        dlg.grab_set()
+
+        bg = "#1a1a2e"
+        fg = "#e0e0e0"
+
+        ttk.Label(dlg, text="Categorias", style="Heading.TLabel").pack(pady=(12, 6))
+
+        list_frame = tk.Frame(dlg, bg=bg)
+        list_frame.pack(fill=tk.BOTH, expand=True, padx=12, pady=4)
+
+        cat_listbox = tk.Listbox(
+            list_frame, bg="#0d1b2a", fg=fg, selectbackground="#1a73e8",
+            relief="flat", highlightthickness=0, font=("Segoe UI", 10),
+        )
+        cat_listbox.pack(fill=tk.BOTH, expand=True)
+
+        def refresh_list():
+            cat_listbox.delete(0, tk.END)
+            for cat in self.app.category_manager.get_all_categories():
+                cat_listbox.insert(tk.END, cat["name"])
+
+        refresh_list()
+
+        add_frame = tk.Frame(dlg, bg=bg)
+        add_frame.pack(fill=tk.X, padx=12, pady=8)
+
+        ent_name = ttk.Entry(add_frame, style="Dark.TEntry", width=25)
+        ent_name.pack(side=tk.LEFT, padx=(0, 6))
+
+        def on_add():
+            name = ent_name.get().strip()
+            if not name:
+                return
+            try:
+                self.app.category_manager.add_category(name)
+                ent_name.delete(0, tk.END)
+                refresh_list()
+            except Exception:
+                messagebox.showerror("Erro", "Categoria ja existe ou nome invalido.", parent=dlg)
+
+        ttk.Button(add_frame, text="Adicionar", style="Accent.TButton", command=on_add).pack(side=tk.LEFT)
+
+        def on_delete():
+            sel = cat_listbox.curselection()
+            if not sel:
+                return
+            cats = self.app.category_manager.get_all_categories()
+            cat = cats[sel[0]]
+            if not messagebox.askyesno("Confirmar", f"Excluir categoria '{cat['name']}'?", parent=dlg):
+                return
+            self.app.category_manager.delete_category(cat["id"])
+            refresh_list()
+
+        ttk.Button(dlg, text="Excluir Selecionada", style="Danger.TButton", command=on_delete).pack(pady=(0, 12))
+
+        def on_close():
+            dlg.destroy()
+            self.refresh()
+
+        dlg.protocol("WM_DELETE_WINDOW", on_close)
 
     # ==================================================================
     # Actions

@@ -57,6 +57,27 @@ class TargetManager:
             query = "SELECT * FROM targets ORDER BY priority DESC, id"
         return self.db.fetch_all(query)
 
+    def get_targets_for_account(self, account_id: int, category_manager) -> list[dict]:
+        """Return active targets filtered by the account's categories.
+
+        - Account with no categories: returns ALL active targets.
+        - Account with categories: returns targets sharing at least one
+          category in common + targets with no categories.
+        """
+        account_cats = category_manager.get_account_categories(account_id)
+        if not account_cats:
+            return self.get_targets(active_only=True)
+
+        placeholders = ",".join("?" for _ in account_cats)
+        query = f"""
+            SELECT DISTINCT t.* FROM targets t
+            LEFT JOIN target_categories tc ON t.id = tc.target_id
+            WHERE t.active = 1
+              AND (tc.category_id IN ({placeholders}) OR tc.target_id IS NULL)
+            ORDER BY t.priority DESC, t.id
+        """
+        return self.db.fetch_all(query, tuple(account_cats))
+
     def get_target(self, target_id: int) -> dict | None:
         """Fetch a single target by id."""
         query = "SELECT * FROM targets WHERE id = ?"

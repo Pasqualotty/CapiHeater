@@ -53,6 +53,13 @@ class ActivityLog:
 
 
 @dataclass
+class Category:
+    id: Optional[int] = None
+    name: str = ""
+    created_at: Optional[str] = None
+
+
+@dataclass
 class Setting:
     key: str = ""
     value: str = ""

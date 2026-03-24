@@ -7,6 +7,7 @@ from queue import Queue
 
 from core.account_manager import AccountManager
 from core.target_manager import TargetManager
+from core.category_manager import CategoryManager
 from core.scheduler import Scheduler
 from workers.twitter_worker import TwitterWorker
 from database.db import Database
@@ -41,6 +42,7 @@ class Engine:
 
         self.account_manager = AccountManager(self.db)
         self.target_manager = TargetManager(self.db)
+        self.category_manager = CategoryManager(self.db)
 
         # account_id -> TwitterWorker
         self._workers: dict[int, TwitterWorker] = {}
@@ -62,7 +64,9 @@ class Engine:
     def _build_worker(self, account: dict) -> TwitterWorker:
         """Construct a TwitterWorker for the given account dict."""
         schedule_json = self._get_schedule_json(account.get("schedule_id", 1))
-        targets = self.target_manager.get_targets(active_only=True)
+        targets = self.target_manager.get_targets_for_account(
+            account["id"], self.category_manager
+        )
 
         worker = TwitterWorker(
             account=account,

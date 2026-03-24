@@ -12,6 +12,7 @@ from database.db import Database
 from core.engine import Engine
 from core.account_manager import AccountManager
 from core.target_manager import TargetManager
+from core.category_manager import CategoryManager
 from utils.config import DB_PATH, APP_NAME, get_user_db_path
 from utils.logger import get_logger
 
@@ -72,6 +73,7 @@ class CapiHeaterApp:
         self.message_queue: Queue = Queue()
         self.account_manager = AccountManager(self.db)
         self.target_manager = TargetManager(self.db)
+        self.category_manager = CategoryManager(self.db)
         self.engine = Engine(
             db=self.db,
             message_queue=self.message_queue,
