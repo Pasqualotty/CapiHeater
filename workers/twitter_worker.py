@@ -669,6 +669,18 @@ class TwitterWorker(BaseWorker):
             likes_on_feed = actions.get("likes_on_feed", True)
             follow_initial_count = actions.get("follow_initial_count", 0)
 
+            # 3b. Execute initial follows IMMEDIATELY after login
+            if follow_initial_count > 0 and self.should_continue():
+                self._log_activity("follow", "success",
+                                   error_message=f"Seguindo {follow_initial_count} perfis iniciais")
+                initial_done = self._execute_follows(follow_initial_count)
+                results_initial_follows = initial_done
+                self._log_activity("follow", "success",
+                                   error_message=f"Follows iniciais concluidos: {initial_done}")
+                if not self.should_continue():
+                    self._send("status", status="stopped")
+                    return
+
             # 4. Browse feed BEFORE actions
             if browse_before_min > 0 or browse_before_max > 0:
                 self._browse_feed(browse_before_min, browse_before_max,
@@ -692,7 +704,7 @@ class TwitterWorker(BaseWorker):
                 return
 
             # Browse between likes -> follows
-            follow_count = actions.get("follows", 0) + follow_initial_count
+            follow_count = actions.get("follows", 0)
             if follow_count > 0 and (browse_between_min > 0 or browse_between_max > 0):
                 self._browse_feed(browse_between_min, browse_between_max,
                                   posts_to_open=posts_to_open,

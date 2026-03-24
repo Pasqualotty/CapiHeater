@@ -33,8 +33,7 @@ class BrowseFeedAction:
 
     TIMELINE_URL = "https://x.com/home"
 
-    # JS: find the tweet article closest to the vertical center of the
-    # viewport and smooth-scroll it into view.
+    # JS: find the nearest NON-AD tweet and smooth-scroll it into view.
     _JS_SNAP_TO_NEAREST_TWEET = """
     const articles = document.querySelectorAll('article[data-testid="tweet"]');
     if (!articles.length) return null;
@@ -42,6 +41,11 @@ class BrowseFeedAction:
     let closest = null;
     let minDist = Infinity;
     articles.forEach(a => {
+        // Skip promoted/ad tweets
+        const text = a.innerText || '';
+        if (text.includes('Promoted') || text.includes('Promovido') || text.includes('Ad')) {
+            return;
+        }
         const rect = a.getBoundingClientRect();
         const articleCenter = rect.top + rect.height / 2;
         const dist = Math.abs(articleCenter - viewportCenter);
@@ -61,6 +65,10 @@ class BrowseFeedAction:
     let closest = null;
     let minDist = Infinity;
     articles.forEach(a => {
+        const text = a.innerText || '';
+        if (text.includes('Promoted') || text.includes('Promovido') || text.includes('Ad')) {
+            return;
+        }
         const rect = a.getBoundingClientRect();
         const center = rect.top + rect.height / 2;
         const dist = Math.abs(center - vc);
@@ -141,9 +149,8 @@ class BrowseFeedAction:
                 "duration_seconds": 0,
             }
 
-        # Determine roughly when to open posts (spread evenly across the
-        # session so they don't all cluster at the start/end).
-        open_at_scrolls = self._plan_post_opens(posts_to_open, duration_secs)
+        # Schedule post opens by TIME (seconds from start), not by iteration.
+        open_at_times = self._plan_post_opens(posts_to_open, duration_secs)
 
         # --- Main browsing loop -------------------------------------------
         while (time.time() - start) < duration_secs:
@@ -151,9 +158,11 @@ class BrowseFeedAction:
                 self.logger.info("Browse interrompido por sinal de parada.")
                 break
 
-            # Should we open a post on this iteration?
-            if open_at_scrolls and scrolls >= open_at_scrolls[0]:
-                open_at_scrolls.pop(0)
+            elapsed = time.time() - start
+
+            # Should we open a post now? (time-based scheduling)
+            if open_at_times and elapsed >= open_at_times[0]:
+                open_at_times.pop(0)
                 if self._open_and_read_post(drv, view_comments_chance, stop_check):
                     posts_opened += 1
 
@@ -164,50 +173,44 @@ class BrowseFeedAction:
                     break
 
             # Pick a browsing behaviour for this iteration.
+            # NO scroll_up — always advance forward.
             behaviour = random.choices(
                 [
                     "scroll_small",
                     "scroll_medium",
                     "scroll_large",
-                    "scroll_up",
                     "pause_read",
                     "distracted_pause",
                 ],
-                weights=[30, 25, 8, 7, 22, 8],
+                weights=[32, 28, 10, 22, 8],
                 k=1,
             )[0]
 
             if behaviour == "scroll_small":
-                px = random.randint(150, 350)
+                px = random.randint(200, 400)
                 drv.execute_script(f"window.scrollBy(0, {px});")
                 self._snap_to_nearest_tweet(drv)
                 self._reading_pause(drv)
 
             elif behaviour == "scroll_medium":
-                px = random.randint(400, 700)
+                px = random.randint(450, 750)
                 drv.execute_script(f"window.scrollBy(0, {px});")
                 self._snap_to_nearest_tweet(drv)
-                random_delay(1.5, 3.5)
+                random_delay(1.5, 3.0)
 
             elif behaviour == "scroll_large":
-                px = random.randint(750, 1200)
+                px = random.randint(800, 1400)
                 drv.execute_script(f"window.scrollBy(0, {px});")
                 self._snap_to_nearest_tweet(drv)
-                random_delay(1.0, 2.0)
-
-            elif behaviour == "scroll_up":
-                px = random.randint(100, 400)
-                drv.execute_script(f"window.scrollBy(0, -{px});")
-                self._snap_to_nearest_tweet(drv)
-                random_delay(2.0, 4.0)
+                random_delay(0.8, 1.5)
 
             elif behaviour == "pause_read":
                 # Linger on the current tweet as if reading it carefully.
                 self._reading_pause(drv)
 
             elif behaviour == "distracted_pause":
-                # Long pause — user got distracted.
-                pause = random.uniform(12, 30)
+                # Short pause — user got distracted.
+                pause = random.uniform(5, 12)
                 self.logger.debug("Pausa distraida de %.1fs", pause)
                 time.sleep(pause)
 
@@ -239,7 +242,7 @@ class BrowseFeedAction:
         return stop_check is not None and stop_check()
 
     def _snap_to_nearest_tweet(self, drv: WebDriver) -> None:
-        """Smooth-scroll so the nearest tweet is centred on screen."""
+        """Smooth-scroll so the nearest non-ad tweet is centred on screen."""
         try:
             drv.execute_script(self._JS_SNAP_TO_NEAREST_TWEET)
             # Give the smooth scroll a moment to settle.
@@ -258,7 +261,7 @@ class BrowseFeedAction:
         """Pause proportionally to how 'big' the current tweet is."""
         info = self._get_center_tweet_info(drv)
         if info is None:
-            random_delay(3.0, 8.0)
+            random_delay(2.0, 5.0)
             return
 
         text_len = info.get("textLength", 0)
@@ -266,15 +269,15 @@ class BrowseFeedAction:
 
         # Base reading time scales with text length.
         if text_len < 50:
-            base = random.uniform(3.0, 6.0)
+            base = random.uniform(2.0, 4.0)
         elif text_len < 200:
-            base = random.uniform(5.0, 10.0)
+            base = random.uniform(3.0, 7.0)
         else:
-            base = random.uniform(8.0, 15.0)
+            base = random.uniform(5.0, 10.0)
 
         # Media tweets get extra linger time.
         if has_media:
-            base += random.uniform(2.0, 5.0)
+            base += random.uniform(1.5, 3.5)
 
         time.sleep(jitter(base, 0.2))
 
@@ -290,26 +293,32 @@ class BrowseFeedAction:
         except (StaleElementReferenceException, WebDriverException):
             pass
 
+    def _is_ad_tweet(self, drv: WebDriver, tweet) -> bool:
+        """Check if a tweet element is a promoted/ad tweet."""
+        try:
+            text = drv.execute_script("return arguments[0].innerText || '';", tweet)
+            ad_indicators = ["Promoted", "Promovido", "Ad\n"]
+            return any(ind in text for ind in ad_indicators)
+        except WebDriverException:
+            return False
+
     # ------------------------------------------------------------------
     # Opening and reading individual posts
     # ------------------------------------------------------------------
 
-    def _plan_post_opens(self, posts_to_open: int, duration_secs: float) -> list[int]:
-        """Return a sorted list of scroll-iteration numbers at which to
-        open a post.  Spread roughly evenly across the session."""
+    def _plan_post_opens(self, posts_to_open: int, duration_secs: float) -> list[float]:
+        """Return a sorted list of TIMESTAMPS (seconds from start) at which
+        to open a post. Spread evenly across the session with jitter."""
         if posts_to_open <= 0:
             return []
 
-        # Estimate total scroll iterations (~8-12 seconds per iteration avg).
-        est_iterations = max(int(duration_secs / 10), posts_to_open + 1)
-        # Space them out, with jitter.
-        interval = est_iterations / (posts_to_open + 1)
+        interval = duration_secs / (posts_to_open + 1)
         targets = []
         for i in range(1, posts_to_open + 1):
-            base = int(interval * i)
-            jittered = max(1, base + random.randint(-2, 2))
+            base = interval * i
+            jittered = max(10.0, base + random.uniform(-interval * 0.2, interval * 0.2))
             targets.append(jittered)
-        return sorted(set(targets))
+        return sorted(targets)
 
     def _open_and_read_post(
         self, drv: WebDriver, view_comments_chance: float, stop_check
@@ -319,87 +328,113 @@ class BrowseFeedAction:
 
         Returns True if the post was successfully opened and read.
         """
-        try:
-            # Find the tweet closest to the viewport centre.
-            tweets = drv.find_elements(By.CSS_SELECTOR, selectors.TWEET_ARTICLE)
-            if not tweets:
-                return False
-
-            # Pick the one nearest the centre.
-            target = self._find_center_tweet_element(drv, tweets)
-            if target is None:
-                return False
-
-            # Click on the tweet text or timestamp to navigate to the post.
-            clickable = self._get_clickable_in_tweet(target)
-            if clickable is None:
-                return False
-
-            self.logger.debug("Abrindo post para leitura...")
-            ActionChains(drv).move_to_element(clickable).pause(
-                random.uniform(0.3, 0.8)
-            ).click().perform()
-
-            # Wait for the post page to load (URL changes to /status/).
+        for attempt in range(2):  # Retry once if first attempt fails
             try:
-                WebDriverWait(drv, 10).until(
-                    lambda d: "/status/" in d.current_url
-                )
-            except TimeoutException:
-                self.logger.debug("Nao conseguiu abrir o post, voltando.")
-                return False
+                # Find the tweet closest to the viewport centre.
+                tweets = drv.find_elements(By.CSS_SELECTOR, selectors.TWEET_ARTICLE)
+                if not tweets:
+                    return False
 
-            random_delay(1.5, 3.0)
+                # Pick the one nearest the centre (skip ads).
+                target = self._find_center_tweet_element(drv, tweets)
+                if target is None:
+                    if attempt == 0:
+                        # Scroll a bit and retry
+                        drv.execute_script("window.scrollBy(0, 400);")
+                        time.sleep(1.0)
+                        continue
+                    return False
 
-            # "Read" the opened post.
-            read_time = random.uniform(5, 20)
-            self.logger.debug("Lendo post por %.1fs...", read_time)
-            time.sleep(read_time)
+                # Skip if it's an ad
+                if self._is_ad_tweet(drv, target):
+                    drv.execute_script("window.scrollBy(0, 500);")
+                    self._snap_to_nearest_tweet(drv)
+                    time.sleep(0.5)
+                    continue
 
-            # Optionally scroll through comments.
-            if random.random() < view_comments_chance:
-                self._view_comments(drv, stop_check)
+                # Click on the tweet text or timestamp to navigate to the post.
+                clickable = self._get_clickable_in_tweet(target)
+                if clickable is None:
+                    if attempt == 0:
+                        # Try the next visible tweet
+                        drv.execute_script("window.scrollBy(0, 300);")
+                        time.sleep(1.0)
+                        continue
+                    return False
 
-            # Navigate back to the feed.
-            drv.back()
-            random_delay(1.5, 3.5)
+                self.logger.debug("Abrindo post para leitura...")
+                ActionChains(drv).move_to_element(clickable).pause(
+                    random.uniform(0.3, 0.8)
+                ).click().perform()
 
-            # Wait for timeline to reappear.
-            try:
-                WebDriverWait(drv, 10).until(
-                    EC.presence_of_element_located(
-                        (By.CSS_SELECTOR, selectors.TWEET_ARTICLE)
+                # Wait for the post page to load (URL changes to /status/).
+                try:
+                    WebDriverWait(drv, 10).until(
+                        lambda d: "/status/" in d.current_url
                     )
-                )
-            except TimeoutException:
-                self.logger.debug("Timeline nao reapareceu apos voltar.")
+                except TimeoutException:
+                    self.logger.debug("Nao conseguiu abrir o post, voltando.")
+                    return False
 
-            random_delay(1.0, 2.5)
-            return True
+                random_delay(1.5, 3.0)
 
-        except (
-            StaleElementReferenceException,
-            NoSuchElementException,
-            WebDriverException,
-        ) as exc:
-            self.logger.debug("Erro ao abrir post: %s", exc)
-            # Try to get back to the feed if we navigated away.
-            try:
-                if "/status/" in drv.current_url:
-                    drv.back()
-                    random_delay(1.5, 3.0)
-            except WebDriverException:
-                pass
-            return False
+                # "Read" the opened post.
+                read_time = random.uniform(5, 15)
+                self.logger.debug("Lendo post por %.1fs...", read_time)
+                time.sleep(read_time)
+
+                # Optionally scroll through comments.
+                if random.random() < view_comments_chance:
+                    self._view_comments(drv, stop_check)
+
+                # Navigate back to the feed.
+                drv.back()
+                random_delay(1.5, 3.5)
+
+                # Wait for timeline to reappear.
+                try:
+                    WebDriverWait(drv, 10).until(
+                        EC.presence_of_element_located(
+                            (By.CSS_SELECTOR, selectors.TWEET_ARTICLE)
+                        )
+                    )
+                except TimeoutException:
+                    self.logger.debug("Timeline nao reapareceu apos voltar.")
+
+                random_delay(1.0, 2.5)
+                return True
+
+            except (
+                StaleElementReferenceException,
+                NoSuchElementException,
+                WebDriverException,
+            ) as exc:
+                self.logger.debug("Erro ao abrir post (tentativa %d): %s", attempt + 1, exc)
+                # Try to get back to the feed if we navigated away.
+                try:
+                    if "/status/" in drv.current_url:
+                        drv.back()
+                        random_delay(1.5, 3.0)
+                except WebDriverException:
+                    pass
+                if attempt == 0:
+                    continue
+                return False
+
+        return False
 
     def _find_center_tweet_element(self, drv: WebDriver, tweets):
-        """Return the tweet WebElement closest to the viewport centre."""
+        """Return the tweet WebElement closest to the viewport centre,
+        skipping promoted/ad tweets."""
         try:
             best = None
             best_dist = float("inf")
             vp_center = drv.execute_script("return window.innerHeight / 2;")
             for tweet in tweets:
                 try:
+                    # Skip ads
+                    if self._is_ad_tweet(drv, tweet):
+                        continue
                     rect = drv.execute_script(
                         "var r = arguments[0].getBoundingClientRect();"
                         "return {top: r.top, height: r.height};",

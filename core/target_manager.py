@@ -70,10 +70,18 @@ class TargetManager:
 
         placeholders = ",".join("?" for _ in account_cats)
         query = f"""
-            SELECT DISTINCT t.* FROM targets t
-            LEFT JOIN target_categories tc ON t.id = tc.target_id
+            SELECT t.* FROM targets t
             WHERE t.active = 1
-              AND (tc.category_id IN ({placeholders}) OR tc.target_id IS NULL)
+              AND (
+                EXISTS (
+                    SELECT 1 FROM target_categories tc
+                    WHERE tc.target_id = t.id AND tc.category_id IN ({placeholders})
+                )
+                OR NOT EXISTS (
+                    SELECT 1 FROM target_categories tc2
+                    WHERE tc2.target_id = t.id
+                )
+              )
             ORDER BY t.priority DESC, t.id
         """
         return self.db.fetch_all(query, tuple(account_cats))
