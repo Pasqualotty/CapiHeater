@@ -188,29 +188,31 @@ class AutoUpdater:
         bat_esc = bat_path.replace("/", "\\")
         dir_esc = exe_dir.replace("/", "\\")
 
+        old_backup = target_exe + ".old"
+        old_esc = old_backup.replace("/", "\\")
+
         script = (
             "@echo off\n"
             "echo Atualizando CapiHeater...\n"
-            "timeout /t 3 /nobreak >nul\n"
-            # Wait for the running exe to unlock (PyInstaller may hold it)
-            ":wait_unlock\n"
-            f'copy /y "{new_tmp_esc}" "{target_esc}" >nul 2>&1\n'
-            "if errorlevel 1 (\n"
+            "timeout /t 2 /nobreak >nul\n"
+            # Delete any previous .old backup
+            f'del /f "{old_esc}" 2>nul\n'
+            # Rename the running exe (Windows allows renaming a locked exe)
+            ":rename_old\n"
+            f'ren "{target_esc}" "CapiHeater.exe.old" 2>nul\n'
+            f'if exist "{target_esc}" (\n'
             "    timeout /t 2 /nobreak >nul\n"
-            "    goto wait_unlock\n"
+            "    goto rename_old\n"
             ")\n"
-            # Copy succeeded — now delete the temp source file with retry
-            ":del_tmp\n"
-            f'del /f "{new_tmp_esc}" 2>nul\n'
-            f'if exist "{new_tmp_esc}" (\n'
-            "    timeout /t 1 /nobreak >nul\n"
-            "    goto del_tmp\n"
-            ")\n"
+            # Move new exe into place (target name is now free)
+            f'move /y "{new_tmp_esc}" "{target_esc}" >nul\n'
+            # Clean up old backup (may fail if still locked, that's ok)
+            f'del /f "{old_esc}" 2>nul\n'
             # Also delete the old running exe if it's different from target
             f'if /i not "{running_esc}"=="{target_esc}" (\n'
             f'    del /f "{running_esc}" 2>nul\n'
             ")\n"
-            # Clean up ALL leftover tmp*.exe in the directory (no quotes on glob!)
+            # Clean up ALL leftover tmp*.exe in the directory
             f"for %%F in ({dir_esc}\\tmp*.exe) do del /f \"%%F\" 2>nul\n"
             # Launch the updated exe
             f'start "" "{target_esc}"\n'
