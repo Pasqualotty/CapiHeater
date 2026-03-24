@@ -43,7 +43,7 @@ class BrowseFeedAction:
     articles.forEach(a => {
         // Skip promoted/ad tweets
         const text = a.innerText || '';
-        if (text.includes('Promoted') || text.includes('Promovido') || text.includes('Ad')) {
+        if (text.includes('Promoted') || text.includes('Promovido')) {
             return;
         }
         const rect = a.getBoundingClientRect();
@@ -297,7 +297,7 @@ class BrowseFeedAction:
         """Check if a tweet element is a promoted/ad tweet."""
         try:
             text = drv.execute_script("return arguments[0].innerText || '';", tweet)
-            ad_indicators = ["Promoted", "Promovido", "Ad\n"]
+            ad_indicators = ["Promoted", "Promovido"]
             return any(ind in text for ind in ad_indicators)
         except WebDriverException:
             return False

@@ -670,13 +670,13 @@ class TwitterWorker(BaseWorker):
             follow_initial_count = actions.get("follow_initial_count", 0)
 
             # 3b. Execute initial follows IMMEDIATELY after login
+            initial_follows_done = 0
             if follow_initial_count > 0 and self.should_continue():
                 self._log_activity("follow", "success",
                                    error_message=f"Seguindo {follow_initial_count} perfis iniciais")
-                initial_done = self._execute_follows(follow_initial_count)
-                results_initial_follows = initial_done
+                initial_follows_done = self._execute_follows(follow_initial_count)
                 self._log_activity("follow", "success",
-                                   error_message=f"Follows iniciais concluidos: {initial_done}")
+                                   error_message=f"Follows iniciais concluidos: {initial_follows_done}")
                 if not self.should_continue():
                     self._send("status", status="stopped")
                     return
@@ -713,7 +713,7 @@ class TwitterWorker(BaseWorker):
                     self._send("status", status="stopped", results=results)
                     return
 
-            results["follows"] = self._execute_follows(follow_count)
+            results["follows"] = self._execute_follows(follow_count) + initial_follows_done
             if not self.should_continue():
                 self._send("status", status="stopped", results=results)
                 return

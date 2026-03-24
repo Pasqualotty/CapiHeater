@@ -474,8 +474,12 @@ class TargetsTab(ttk.Frame):
             sel = cat_listbox.curselection()
             if not sel:
                 return
+            selected_name = cat_listbox.get(sel[0])
             cats = self.app.category_manager.get_all_categories()
-            cat = cats[sel[0]]
+            cat = next((c for c in cats if c["name"] == selected_name), None)
+            if cat is None:
+                refresh_list()
+                return
             if not messagebox.askyesno("Confirmar", f"Excluir categoria '{cat['name']}'?", parent=dlg):
                 return
             self.app.category_manager.delete_category(cat["id"])

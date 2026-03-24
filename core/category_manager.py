@@ -49,6 +49,9 @@ class CategoryManager:
                     (account_id, cat_id),
                 )
             conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
         finally:
             conn.close()
 
@@ -86,6 +89,9 @@ class CategoryManager:
                     (target_id, cat_id),
                 )
             conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
         finally:
             conn.close()
 

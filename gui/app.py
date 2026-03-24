@@ -200,28 +200,23 @@ class CapiHeaterApp:
     def _handle_message(self, msg: dict) -> None:
         """Process a single message from the engine/workers.
 
-        Expected message format::
-
-            {
-                "type": "status_update" | "log" | "error" | ...,
-                "account_id": int,
-                "data": {...}
-            }
+        Worker messages use the key ``event`` with values like
+        ``status``, ``schedule``, ``action_complete``.
         """
-        msg_type = msg.get("type", "")
+        event = msg.get("event", "")
 
-        if msg_type == "status_update":
+        if event == "status":
             dashboard = self._tabs.get("Dashboard")
             if dashboard and hasattr(dashboard, "on_status_update"):
                 dashboard.on_status_update(msg)
+            status = msg.get("status", "")
+            if status == "error":
+                self.set_status(f"Erro: {msg.get('error', 'desconhecido')}")
 
-        elif msg_type == "log":
+        elif event == "action_complete":
             logs_tab = self._tabs.get("Logs")
             if logs_tab and hasattr(logs_tab, "on_new_log"):
                 logs_tab.on_new_log(msg)
-
-        elif msg_type == "error":
-            self.set_status(f"Erro: {msg.get('data', {}).get('message', 'desconhecido')}")
 
         # Refresh dashboard on any message
         dashboard = self._tabs.get("Dashboard")
