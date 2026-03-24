@@ -132,10 +132,12 @@ class TwitterWorker(BaseWorker):
 
         # Verify login
         if not self._is_logged_in():
+            self._log_activity("login", "failed", error_message="Cookies invalidos ou expirados")
             raise RuntimeError(
                 f"Falha ao logar com cookies da conta @{self.account['username']}. "
                 "Verifique se os cookies estao validos."
             )
+        self._log_activity("login", "success")
         logger.info(f"[{self.account['username']}] Login via cookies OK")
 
     def _is_logged_in(self) -> bool:
@@ -280,6 +282,7 @@ class TwitterWorker(BaseWorker):
         if count <= 0:
             return done
 
+        self._log_activity("like", "success", error_message=f"Iniciando {count} likes no feed")
         # Go to home timeline to like from feed
         self.driver.get("https://x.com/home")
         time.sleep(random.uniform(3, 5))
@@ -366,6 +369,8 @@ class TwitterWorker(BaseWorker):
     def _execute_follows(self, count: int):
         """Follow target accounts."""
         done = 0
+        if count > 0:
+            self._log_activity("follow", "success", error_message=f"Iniciando {count} follows")
         for target in self._cycle_targets(count):
             if not self.should_continue():
                 break
@@ -409,6 +414,7 @@ class TwitterWorker(BaseWorker):
         if count <= 0:
             return done
 
+        self._log_activity("retweet", "success", error_message=f"Iniciando {count} retweets")
         self.driver.get("https://x.com/home")
         time.sleep(random.uniform(3, 5))
 
@@ -464,6 +470,7 @@ class TwitterWorker(BaseWorker):
         if count <= 0:
             return done
 
+        self._log_activity("unfollow", "success", error_message=f"Iniciando {count} unfollows")
         try:
             self.driver.get(f"https://x.com/{self.account['username']}/following")
             time.sleep(random.uniform(3, 5))
@@ -532,6 +539,8 @@ class TwitterWorker(BaseWorker):
         duration_secs = random.uniform(min_seconds, max_seconds)
         duration_min = duration_secs / 60.0
         self._send("status", status="browsing", duration_seconds=round(duration_secs))
+        self._log_activity("browse", "success",
+                           error_message=f"Navegando feed por {duration_secs:.0f}s ({duration_min:.1f} min)")
         logger.info(f"[{self.account['username']}] Navegando pelo feed por {duration_secs:.0f}s ({duration_min:.1f} min)")
 
         browser = BrowseFeedAction(self.driver, logger)
@@ -541,6 +550,7 @@ class TwitterWorker(BaseWorker):
             posts_to_open=posts_to_open,
             view_comments_chance=view_comments_chance,
         )
+        self._log_activity("browse", "success", error_message="Navegacao do feed concluida")
 
     # ------------------------------------------------------------------
     # Utility
@@ -559,6 +569,7 @@ class TwitterWorker(BaseWorker):
         if count <= 0:
             return done
 
+        self._log_activity("like", "success", error_message=f"Iniciando {count} likes em perfis alvo")
         for target in self._cycle_targets(count):
             if not self.should_continue():
                 break
@@ -627,12 +638,16 @@ class TwitterWorker(BaseWorker):
 
         try:
             self._send("status", status="starting")
+            self._log_activity("sistema", "success", error_message="Worker iniciado")
             logger.info(f"[{username}] Worker starting")
 
             # 1. Determine today's actions
             start_date = self.account.get("start_date")
             actions = Scheduler.get_today_actions(self.schedule_json, start_date)
             self._send("schedule", actions=actions)
+            plan = (f"Likes: {actions.get('likes',0)}, Follows: {actions.get('follows',0)}, "
+                    f"Retweets: {actions.get('retweets',0)}, Unfollows: {actions.get('unfollows',0)}")
+            self._log_activity("sistema", "success", error_message=f"Plano do dia: {plan}")
             logger.info(f"[{username}] Today's plan: {actions}")
 
             # 2. Launch browser
@@ -717,14 +732,18 @@ class TwitterWorker(BaseWorker):
             results["unfollows"] = self._execute_unfollows(actions.get("unfollows", 0))
 
             # 6. Done
+            summary = ", ".join(f"{k}: {v}" for k, v in results.items())
+            self._log_activity("sistema", "success", error_message=f"Concluido - {summary}")
             self._send("status", status="completed", results=results)
             logger.info(f"[{username}] Worker completed: {results}")
 
         except Exception as exc:
             tb = traceback.format_exc()
             logger.error(f"[{username}] Worker error: {exc}\n{tb}")
+            self._log_activity("sistema", "failed", error_message=str(exc))
             self._send("status", status="error", error=str(exc))
 
         finally:
             self._close_browser()
+            self._log_activity("sistema", "success", error_message="Browser fechado")
             self._send("status", status="idle")

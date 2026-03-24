@@ -51,7 +51,7 @@ class LogsTab(ttk.Frame):
         ttk.Label(filter_frame, text="Acao:", style="Dark.TLabel").pack(side=tk.LEFT, padx=(0, 4))
         self._filter_action = ttk.Combobox(
             filter_frame,
-            values=["Todas", "like", "follow", "retweet", "unfollow"],
+            values=["Todas", "like", "follow", "retweet", "unfollow", "login", "browse", "sistema"],
             state="readonly",
             style="Dark.TCombobox",
             width=12,
@@ -64,7 +64,7 @@ class LogsTab(ttk.Frame):
         ttk.Label(filter_frame, text="Status:", style="Dark.TLabel").pack(side=tk.LEFT, padx=(0, 4))
         self._filter_status = ttk.Combobox(
             filter_frame,
-            values=["Todos", "success", "error", "skipped"],
+            values=["Todos", "success", "failed", "error", "skipped"],
             state="readonly",
             style="Dark.TCombobox",
             width=10,
@@ -156,7 +156,7 @@ class LogsTab(ttk.Frame):
             query += " AND al.status = ?"
             params.append(status)
 
-        query += " ORDER BY al.executed_at DESC LIMIT 500"
+        query += " ORDER BY al.executed_at DESC LIMIT 1000"
 
         rows = self.app.db.fetch_all(query, tuple(params))
 
@@ -178,6 +178,7 @@ class LogsTab(ttk.Frame):
             )
 
         self._tree.tag_configure("log_success", foreground="#00e676")
+        self._tree.tag_configure("log_failed", foreground="#ff1744")
         self._tree.tag_configure("log_error", foreground="#ff1744")
         self._tree.tag_configure("log_skipped", foreground="#ffea00")
 
