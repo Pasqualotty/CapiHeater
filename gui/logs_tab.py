@@ -64,7 +64,7 @@ class LogsTab(ttk.Frame):
         ttk.Label(filter_frame, text="Status:", style="Dark.TLabel").pack(side=tk.LEFT, padx=(0, 4))
         self._filter_status = ttk.Combobox(
             filter_frame,
-            values=["Todos", "success", "failed", "error", "skipped"],
+            values=["Todos", "success", "failed", "skipped"],
             state="readonly",
             style="Dark.TCombobox",
             width=10,

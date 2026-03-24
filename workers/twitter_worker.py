@@ -369,8 +369,10 @@ class TwitterWorker(BaseWorker):
     def _execute_follows(self, count: int):
         """Follow target accounts."""
         done = 0
-        if count > 0:
+        if count > 0 and self.targets:
             self._log_activity("follow", "success", error_message=f"Iniciando {count} follows")
+        elif count > 0 and not self.targets:
+            self._log_activity("follow", "skipped", error_message="Nenhum alvo disponivel para follow")
         for target in self._cycle_targets(count):
             if not self.should_continue():
                 break
@@ -758,4 +760,3 @@ class TwitterWorker(BaseWorker):
         finally:
             self._close_browser()
             self._log_activity("sistema", "success", error_message="Browser fechado")
-            self._send("status", status="idle")

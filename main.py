@@ -63,7 +63,20 @@ def main():
     logger.info(f"Starting {APP_NAME} v{__version__}")
 
     # Check if Supabase is configured
-    from auth.supabase_client import SupabaseAuth
+    try:
+        from auth.supabase_client import SupabaseAuth
+    except ImportError:
+        logger.warning("supabase package not installed - running in dev mode.")
+        _root = tk.Tk()
+        _root.withdraw()
+        messagebox.showwarning(
+            "Modo Desenvolvimento",
+            "O pacote 'supabase' nao esta instalado.\n"
+            "O aplicativo sera iniciado sem autenticacao (modo dev).",
+        )
+        _root.destroy()
+        _launch_app()
+        return
 
     if not SupabaseAuth.is_configured():
         # Dev mode: Supabase placeholders still in place
