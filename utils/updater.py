@@ -192,19 +192,26 @@ class AutoUpdater:
             "@echo off\n"
             "echo Atualizando CapiHeater...\n"
             "timeout /t 3 /nobreak >nul\n"
-            # Wait for the running exe to be unlocked
-            ":retry\n"
-            f'del /f "{running_esc}" 2>nul\n'
-            f'if exist "{running_esc}" (\n'
-            "    timeout /t 1 /nobreak >nul\n"
-            "    goto retry\n"
+            # Wait for the running exe to unlock (PyInstaller may hold it)
+            ":wait_unlock\n"
+            f'copy /y "{new_tmp_esc}" "{target_esc}" >nul 2>&1\n'
+            "if errorlevel 1 (\n"
+            "    timeout /t 2 /nobreak >nul\n"
+            "    goto wait_unlock\n"
             ")\n"
-            # Also delete the old target if different from running
-            f'del /f "{target_esc}" 2>nul\n'
-            # Move new download to the canonical name
-            f'move /y "{new_tmp_esc}" "{target_esc}"\n'
-            # Clean up any leftover tmp*.exe files in the directory
-            f'for %%F in ("{dir_esc}\\tmp*.exe") do del /f "%%F" 2>nul\n'
+            # Copy succeeded — now delete the temp source file with retry
+            ":del_tmp\n"
+            f'del /f "{new_tmp_esc}" 2>nul\n'
+            f'if exist "{new_tmp_esc}" (\n'
+            "    timeout /t 1 /nobreak >nul\n"
+            "    goto del_tmp\n"
+            ")\n"
+            # Also delete the old running exe if it's different from target
+            f'if /i not "{running_esc}"=="{target_esc}" (\n'
+            f'    del /f "{running_esc}" 2>nul\n'
+            ")\n"
+            # Clean up ALL leftover tmp*.exe in the directory (no quotes on glob!)
+            f"for %%F in ({dir_esc}\\tmp*.exe) do del /f \"%%F\" 2>nul\n"
             # Launch the updated exe
             f'start "" "{target_esc}"\n'
             # Delete this batch script
