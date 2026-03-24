@@ -42,7 +42,8 @@ class AccountsTab(ttk.Frame):
         ttk.Button(btn_frame, text="Adicionar Conta", style="Accent.TButton", command=self._add_account_dialog).pack(side=tk.LEFT, padx=(0, 6))
         ttk.Button(btn_frame, text="Editar", style="Accent.TButton", command=self._edit_account_dialog).pack(side=tk.LEFT, padx=(0, 6))
         ttk.Button(btn_frame, text="Excluir", style="Danger.TButton", command=self._delete_account).pack(side=tk.LEFT, padx=(0, 6))
-        ttk.Button(btn_frame, text="Importar Cookies", style="Accent.TButton", command=self._import_cookies).pack(side=tk.LEFT)
+        ttk.Button(btn_frame, text="Importar Cookies", style="Accent.TButton", command=self._import_cookies).pack(side=tk.LEFT, padx=(0, 6))
+        ttk.Button(btn_frame, text="Importar em Massa", style="Accent.TButton", command=self._bulk_import).pack(side=tk.LEFT)
 
         # ---------- Treeview ----------
         tree_frame = ttk.Frame(self, style="Dark.TFrame")
@@ -288,6 +289,75 @@ class AccountsTab(ttk.Frame):
 
         self.app.account_manager.update_account(aid, cookies_json=cookies)
         self.app.set_status("Cookies importados com sucesso")
+        self.refresh()
+
+    # ==================================================================
+    # Bulk import
+    # ==================================================================
+
+    def _bulk_import(self) -> None:
+        """Import multiple accounts at once from multiple JSON cookie files.
+
+        Each file becomes one account. The username is derived from the filename.
+        """
+        file_paths = filedialog.askopenfilenames(
+            title="Selecionar arquivos de cookies (multiplos)",
+            filetypes=[("JSON files", "*.json"), ("Todos", "*.*")],
+            parent=self,
+        )
+        if not file_paths:
+            return
+
+        from pathlib import Path
+
+        successes = []
+        failures = []
+
+        # Get existing usernames to check duplicates
+        existing = {
+            acc["username"]
+            for acc in self.app.account_manager.get_all_accounts()
+        }
+
+        for fp in file_paths:
+            path = Path(fp)
+            filename = path.name
+            username = path.stem
+
+            if not username:
+                failures.append((filename, "Nome de arquivo vazio"))
+                continue
+
+            if username in existing:
+                failures.append((filename, "Conta ja existente"))
+                continue
+
+            cookies = self._load_cookies(fp)
+            if cookies is None:
+                failures.append((filename, "Falha ao carregar cookies"))
+                continue
+
+            try:
+                self.app.account_manager.add_account(
+                    username=username,
+                    cookies_json=cookies,
+                    start_date=date.today().isoformat(),
+                )
+                existing.add(username)
+                successes.append(username)
+            except Exception as e:
+                failures.append((filename, f"Erro no banco: {e}"))
+
+        # Build summary
+        lines = [f"Sucesso: {len(successes)} conta(s)"]
+        if failures:
+            lines.append(f"Falha: {len(failures)} arquivo(s)\n")
+            lines.append("Erros:")
+            for fname, err in failures:
+                lines.append(f"  - {fname}: {err}")
+
+        messagebox.showinfo("Importacao em Massa", "\n".join(lines), parent=self)
+        self.app.set_status(f"{len(successes)} conta(s) importada(s)")
         self.refresh()
 
     # ==================================================================
