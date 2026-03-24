@@ -153,8 +153,12 @@ class Scheduler:
 
     @classmethod
     def _apply_variation(cls, base_value: int) -> int:
-        """Apply +-20% random variation to *base_value*, min 0."""
+        """Apply +-20% random variation to *base_value*.
+
+        If the base is > 0, the result is guaranteed to be at least 1
+        (variation cannot zero out a scheduled action).
+        """
         if base_value <= 0:
             return 0
         factor = 1.0 + random.uniform(-cls.VARIATION_PERCENT, cls.VARIATION_PERCENT)
-        return max(0, round(base_value * factor))
+        return max(1, round(base_value * factor))

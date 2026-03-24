@@ -42,10 +42,9 @@ class BrowseFeedAction:
     let minDist = Infinity;
     articles.forEach(a => {
         // Skip promoted/ad tweets
+        if (a.querySelector('[data-testid="placementTracking"]')) return;
         const text = a.innerText || '';
-        if (text.includes('Promoted') || text.includes('Promovido')) {
-            return;
-        }
+        if (text.includes('Promoted') || text.includes('Promovido')) return;
         const rect = a.getBoundingClientRect();
         const articleCenter = rect.top + rect.height / 2;
         const dist = Math.abs(articleCenter - viewportCenter);
@@ -65,10 +64,9 @@ class BrowseFeedAction:
     let closest = null;
     let minDist = Infinity;
     articles.forEach(a => {
+        if (a.querySelector('[data-testid="placementTracking"]')) return;
         const text = a.innerText || '';
-        if (text.includes('Promoted') || text.includes('Promovido') || text.includes('Ad')) {
-            return;
-        }
+        if (text.includes('Promoted') || text.includes('Promovido')) return;
         const rect = a.getBoundingClientRect();
         const center = rect.top + rect.height / 2;
         const dist = Math.abs(center - vc);
@@ -323,8 +321,16 @@ class BrowseFeedAction:
     def _is_ad_tweet(self, drv: WebDriver, tweet) -> bool:
         """Check if a tweet element is a promoted/ad tweet."""
         try:
+            # Most reliable: Twitter ads have a placementTracking element
+            has_tracking = drv.execute_script(
+                'return arguments[0].querySelector(\'[data-testid="placementTracking"]\') !== null;',
+                tweet,
+            )
+            if has_tracking:
+                return True
+            # Fallback: check innerText for ad keywords
             text = drv.execute_script("return arguments[0].innerText || '';", tweet)
-            ad_indicators = ["Promoted", "Promovido"]
+            ad_indicators = ["Promoted", "Promovido", "Anúncio", "Publicidad"]
             return any(ind in text for ind in ad_indicators)
         except WebDriverException:
             return False
@@ -375,6 +381,8 @@ class BrowseFeedAction:
 
                 # Skip if it's an ad
                 if self._is_ad_tweet(drv, target):
+                    self.logger.info("Anuncio detectado, pulando...")
+                    self._emit("ad_skipped", {})
                     drv.execute_script("window.scrollBy(0, 500);")
                     self._snap_to_nearest_tweet(drv)
                     time.sleep(0.5)

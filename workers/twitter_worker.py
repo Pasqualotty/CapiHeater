@@ -695,7 +695,8 @@ class TwitterWorker(BaseWorker):
             self._current_day = day_number
             actions = Scheduler.get_today_actions(self.schedule_json, start_date)
             self._send("schedule", actions=actions)
-            plan = (f"Dia {day_number} - Likes: {actions.get('likes',0)}, Follows: {actions.get('follows',0)}, "
+            plan = (f"Dia {day_number} - Likes: {actions.get('likes',0)}, "
+                    f"Follows: {actions.get('follows',0)} (inclui {actions.get('follow_initial_count',0)} iniciais), "
                     f"Retweets: {actions.get('retweets',0)}, Unfollows: {actions.get('unfollows',0)}")
             self._log_activity("sistema", "success", error_message=f"Plano do dia: {plan}")
             logger.info(f"[{username}] Day {day_number} plan: {actions}")
@@ -774,7 +775,8 @@ class TwitterWorker(BaseWorker):
 
             # Browse between likes -> follows
             follow_count = actions.get("follows", 0)
-            if follow_count > 0 and (browse_between_min > 0 or browse_between_max > 0):
+            remaining_follows = max(0, follow_count - initial_follows_done)
+            if remaining_follows > 0 and (browse_between_min > 0 or browse_between_max > 0):
                 self._browse_feed(browse_between_min, browse_between_max,
                                   posts_to_open=posts_to_open,
                                   view_comments_chance=view_comments_chance)
@@ -782,7 +784,7 @@ class TwitterWorker(BaseWorker):
                     self._send("status", status="stopped", results=results)
                     return
 
-            results["follows"] = self._execute_follows(follow_count) + initial_follows_done
+            results["follows"] = self._execute_follows(remaining_follows) + initial_follows_done
             if not self.should_continue():
                 self._send("status", status="stopped", results=results)
                 return
