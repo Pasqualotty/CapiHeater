@@ -141,6 +141,7 @@ class CapiHeaterApp:
         from gui.schedule_tab import ScheduleTab
         from gui.logs_tab import LogsTab
         from gui.settings_tab import SettingsTab
+        from gui.docs_tab import DocsTab
 
         tabs = [
             ("Dashboard", DashboardTab),
@@ -149,6 +150,7 @@ class CapiHeaterApp:
             ("Cronogramas", ScheduleTab),
             ("Logs", LogsTab),
             ("Configurações", SettingsTab),
+            ("Documentação", DocsTab),
         ]
 
         for label, TabClass in tabs:
