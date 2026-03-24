@@ -72,15 +72,9 @@ class TargetManager:
         query = f"""
             SELECT t.* FROM targets t
             WHERE t.active = 1
-              AND (
-                EXISTS (
-                    SELECT 1 FROM target_categories tc
-                    WHERE tc.target_id = t.id AND tc.category_id IN ({placeholders})
-                )
-                OR NOT EXISTS (
-                    SELECT 1 FROM target_categories tc2
-                    WHERE tc2.target_id = t.id
-                )
+              AND EXISTS (
+                  SELECT 1 FROM target_categories tc
+                  WHERE tc.target_id = t.id AND tc.category_id IN ({placeholders})
               )
             ORDER BY t.priority DESC, t.id
         """
