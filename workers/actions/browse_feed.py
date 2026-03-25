@@ -362,19 +362,24 @@ class BrowseFeedAction:
 
         Returns a dict with ``{"comments": int}`` on success, or False on failure.
         """
-        for attempt in range(2):  # Retry once if first attempt fails
+        for attempt in range(3):  # Up to 3 attempts with progressive scrolling
             try:
                 # Find the tweet closest to the viewport centre.
                 tweets = drv.find_elements(By.CSS_SELECTOR, selectors.TWEET_ARTICLE)
                 if not tweets:
+                    self.logger.info("Nenhum tweet encontrado na pagina (tentativa %d)", attempt + 1)
                     return False
 
                 # Pick the one nearest the centre (skip ads).
                 target = self._find_center_tweet_element(drv, tweets)
                 if target is None:
-                    if attempt == 0:
-                        # Scroll a bit and retry
-                        drv.execute_script("window.scrollBy(0, 400);")
+                    scroll_px = 400 if attempt == 0 else 800
+                    self.logger.info(
+                        "Nenhum post valido encontrado para abrir (tentativa %d), scrollando %dpx",
+                        attempt + 1, scroll_px,
+                    )
+                    if attempt < 2:
+                        drv.execute_script(f"window.scrollBy(0, {scroll_px});")
                         time.sleep(1.0)
                         continue
                     return False
@@ -391,8 +396,10 @@ class BrowseFeedAction:
                 # Click on the tweet text or timestamp to navigate to the post.
                 clickable = self._get_clickable_in_tweet(target)
                 if clickable is None:
-                    if attempt == 0:
-                        # Try the next visible tweet
+                    self.logger.info(
+                        "Elemento clicavel nao encontrado no post (tentativa %d)", attempt + 1,
+                    )
+                    if attempt < 2:
                         drv.execute_script("window.scrollBy(0, 300);")
                         time.sleep(1.0)
                         continue
@@ -412,7 +419,8 @@ class BrowseFeedAction:
                         lambda d: "/status/" in d.current_url
                     )
                 except TimeoutException:
-                    self.logger.debug("Nao conseguiu abrir o post, voltando.")
+                    self.logger.info("Post nao carregou apos clique")
+                    self._emit("post_failed", {"post_number": post_number, "reason": "timeout"})
                     return False
 
                 random_delay(1.5, 3.0)
@@ -452,7 +460,8 @@ class BrowseFeedAction:
                 NoSuchElementException,
                 WebDriverException,
             ) as exc:
-                self.logger.debug("Erro ao abrir post (tentativa %d): %s", attempt + 1, exc)
+                self.logger.info("Erro ao abrir post (tentativa %d): %s", attempt + 1, exc)
+                self._emit("post_failed", {"post_number": post_number, "reason": str(exc)})
                 # Try to get back to the feed if we navigated away.
                 try:
                     if "/status/" in drv.current_url:
@@ -460,7 +469,7 @@ class BrowseFeedAction:
                         random_delay(1.5, 3.0)
                 except WebDriverException:
                     pass
-                if attempt == 0:
+                if attempt < 2:
                     continue
                 return False
 

@@ -116,6 +116,20 @@ class TwitterWorker(BaseWorker):
         except Exception:
             return set()
 
+    def _get_all_followed_targets(self) -> set:
+        """Return ALL targets ever followed by this account (any day)."""
+        if self.db is None:
+            return set()
+        try:
+            rows = self.db.fetch_all(
+                """SELECT DISTINCT target_username FROM action_history
+                   WHERE account_id = ? AND action_type = 'follow'""",
+                (self.account["id"],),
+            )
+            return {r["target_username"] for r in rows}
+        except Exception:
+            return set()
+
     # ------------------------------------------------------------------
     # Browser helpers
     # ------------------------------------------------------------------
@@ -362,16 +376,26 @@ class TwitterWorker(BaseWorker):
 
         return done
 
-    def _find_and_click_follow(self) -> bool:
+    def _find_and_click_follow(self):
         """Find the Follow/Seguir button on the current page and click it via JS.
-        Returns True if clicked successfully."""
+
+        Returns:
+            True if clicked successfully,
+            'already_following' if the account is already followed,
+            False if no button found.
+        """
         # Use JavaScript to find and click — avoids stale element issues
-        clicked = self.driver.execute_script("""
+        result = self.driver.execute_script("""
             // Try data-testid that ends with -follow (Twitter's pattern)
             var btns = document.querySelectorAll('[data-testid$="-follow"]');
             for (var i = 0; i < btns.length; i++) {
                 var text = btns[i].innerText.trim().toLowerCase();
                 if (text === 'follow' || text === 'seguir') {
+                    // Check aria-label to avoid clicking "Following" buttons
+                    var aria = btns[i].getAttribute('aria-label') || '';
+                    if (aria.indexOf('Following') !== -1 || aria.indexOf('Seguindo') !== -1) {
+                        continue;
+                    }
                     btns[i].scrollIntoView({behavior: 'smooth', block: 'center'});
                     btns[i].click();
                     return true;
@@ -390,9 +414,12 @@ class TwitterWorker(BaseWorker):
                     }
                 }
             }
+            // Check if already following (unfollow button present)
+            var unfollowBtns = document.querySelectorAll('[data-testid$="-unfollow"]');
+            if (unfollowBtns.length > 0) return 'already_following';
             return false;
         """)
-        return bool(clicked)
+        return result
 
     def _execute_follows(self, count: int):
         """Follow target accounts."""
@@ -421,16 +448,22 @@ class TwitterWorker(BaseWorker):
                 self._scroll_naturally(1)
                 time.sleep(random.uniform(1.0, 2.0))
 
-                if self._find_and_click_follow():
+                follow_result = self._find_and_click_follow()
+                if follow_result is True:
                     done += 1
                     self._send("action_complete", action="follow", target=target_user, progress=done)
                     self._log_activity("follow", "success", target_username=target_user, target_url=f"https://x.com/{target_user}")
                     self._record_action(target_user, "follow", getattr(self, "_current_day", 1))
                     logger.info(f"[{self.account['username']}] Followed @{target_user} ({done}/{count})")
                     time.sleep(random.uniform(1.5, 3.0))
+                elif follow_result == "already_following":
+                    self._log_activity("follow", "skipped", target_username=target_user, error_message="Ja segue este perfil")
+                    # Record so we don't try again on future runs
+                    self._record_action(target_user, "follow", getattr(self, "_current_day", 1))
+                    logger.info(f"[{self.account['username']}] Already following @{target_user}, skipped")
                 else:
-                    self._log_activity("follow", "skipped", target_username=target_user, error_message="Botao nao encontrado")
-                    logger.warning(f"Follow button not found for @{target_user} (may already be following)")
+                    self._log_activity("follow", "skipped", target_username=target_user, error_message="Botao Follow nao encontrado")
+                    logger.warning(f"Follow button not found for @{target_user}")
 
             except Exception as exc:
                 self._log_activity("follow", "failed", target_username=target_user, error_message=str(exc))
@@ -585,9 +618,15 @@ class TwitterWorker(BaseWorker):
             elif event_type == "comment_view":
                 self._log_activity("browse", "success",
                                    error_message=f"Visualizando comentario {data['comment_number']}/{data['total']} do post {data['post_number']}")
+            elif event_type == "post_failed":
+                self._log_activity("browse", "warning",
+                                   error_message=f"Falha ao abrir post {data.get('post_number', '?')}: {data.get('reason', 'desconhecido')}")
             elif event_type == "browse_summary":
-                self._log_activity("browse", "success",
-                                   error_message=f"Browse: {data['posts_opened']} posts abertos, {data['comments_viewed']} comentarios vistos, {data['scrolls']} scrolls")
+                status = "success" if data["posts_opened"] > 0 else "warning"
+                msg = f"Browse: {data['posts_opened']} posts abertos, {data['comments_viewed']} comentarios vistos, {data['scrolls']} scrolls"
+                if data["posts_opened"] == 0:
+                    msg += f" (de {posts_to_open} planejados)"
+                self._log_activity("browse", status, error_message=msg)
 
         browser = BrowseFeedAction(self.driver, logger)
         browser.execute(
@@ -707,18 +746,22 @@ class TwitterWorker(BaseWorker):
                                error_message=f"Alvos carregados ({len(self.targets)}): {', '.join(target_names[:20])}")
             logger.info(f"[{username}] Targets loaded: {target_names}")
 
-            # Filter out targets already acted upon today
-            acted_follows = self._get_acted_targets("follow", day_number)
-            acted_likes = self._get_acted_targets("like", day_number)
-            acted = acted_follows | acted_likes
-            if acted:
+            # Filter out targets already followed (ANY day — follows should never repeat)
+            already_followed = self._get_all_followed_targets()
+            if already_followed:
                 before = len(self.targets)
-                self.targets = [t for t in self.targets if t.get("username", "").lstrip("@") not in acted]
+                self.targets = [t for t in self.targets
+                                if t.get("username", "").lstrip("@") not in already_followed]
                 filtered = before - len(self.targets)
                 if filtered > 0:
                     self._log_activity("sistema", "success",
-                                       error_message=f"{filtered} alvos filtrados (ja agidos no dia {day_number})")
-                    logger.info(f"[{username}] Filtered {filtered} already-acted targets")
+                                       error_message=f"{filtered} alvos filtrados (ja seguidos anteriormente)")
+                    logger.info(f"[{username}] Filtered {filtered} already-followed targets")
+
+            if not self.targets:
+                self._log_activity("sistema", "warning",
+                                   error_message="TODOS os alvos foram filtrados (ja seguidos ou sem alvos na categoria)")
+                logger.warning(f"[{username}] All targets filtered out — none available")
 
             # 2. Launch browser
             self._create_browser()
