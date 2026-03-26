@@ -194,7 +194,7 @@ class AutoUpdater:
         script = (
             "@echo off\n"
             "echo Atualizando CapiHeater...\n"
-            "timeout /t 2 /nobreak >nul\n"
+            "timeout /t 3 /nobreak >nul\n"
             # Delete any previous .old backup
             f'del /f "{old_esc}" 2>nul\n'
             # Rename the running exe (Windows allows renaming a locked exe)
@@ -213,7 +213,11 @@ class AutoUpdater:
             f'    del /f "{running_esc}" 2>nul\n'
             ")\n"
             # Clean up ALL leftover tmp*.exe in the directory
-            f"for %%F in ({dir_esc}\\tmp*.exe) do del /f \"%%F\" 2>nul\n"
+            # Use pushd/popd to avoid spaces in path breaking the for loop
+            f'pushd "{dir_esc}"\n'
+            f"for %%F in (tmp*.exe) do del /f \"%%F\" 2>nul\n"
+            f'del /f "CapiHeater.exe.old" 2>nul\n'
+            f"popd\n"
             # Launch the updated exe
             f'start "" "{target_esc}"\n'
             # Delete this batch script

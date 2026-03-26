@@ -24,6 +24,29 @@ from utils.config import APP_NAME, DATA_DIR
 from utils.logger import get_logger
 
 
+def _cleanup_update_leftovers():
+    """Delete tmp*.exe and .old files left behind by the auto-updater."""
+    import glob as _glob
+
+    current_exe = (
+        os.path.normcase(os.path.abspath(sys.executable))
+        if getattr(sys, "frozen", False)
+        else None
+    )
+
+    for pattern in (
+        os.path.join(_BASE_DIR, "tmp*.exe"),
+        os.path.join(_BASE_DIR, "CapiHeater.exe.old"),
+    ):
+        for path in _glob.glob(pattern):
+            if current_exe and os.path.normcase(os.path.abspath(path)) == current_exe:
+                continue
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+
+
 def _migrate_old_data():
     """Move database files from old location (next to .exe) to AppData."""
     import shutil
@@ -57,6 +80,7 @@ def _launch_app(auth_session: dict | None = None):
 
 
 def main():
+    _cleanup_update_leftovers()
     _migrate_old_data()
 
     logger = get_logger(__name__)
