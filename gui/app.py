@@ -220,6 +220,16 @@ class CapiHeaterApp:
             if logs_tab and hasattr(logs_tab, "on_new_log"):
                 logs_tab.on_new_log(msg)
 
+        elif event == "warning":
+            warning_msg = msg.get("message", "")
+            username = msg.get("username", "")
+            if warning_msg:
+                self.set_status(f"Aviso ({username}): {warning_msg}")
+                messagebox.showwarning(
+                    "Aviso - CapiHeater",
+                    f"Conta @{username}:\n\n{warning_msg}"
+                )
+
         # Refresh dashboard on any message
         dashboard = self._tabs.get("Dashboard")
         if dashboard and hasattr(dashboard, "refresh"):

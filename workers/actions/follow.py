@@ -63,8 +63,9 @@ class FollowAction:
         # Check if already following (unfollow button present means already following)
         try:
             drv.find_element(By.CSS_SELECTOR, selectors.PROFILE_UNFOLLOW_BUTTON)
-            self.logger.info("Already following @%s.", username)
-            return {"success": True, "message": f"Already following @{username}."}
+            self.logger.info("Already following @%s — skipping.", username)
+            return {"success": False, "already_following": True,
+                    "message": f"Already following @{username}."}
         except NoSuchElementException:
             pass  # Not yet following, proceed
 

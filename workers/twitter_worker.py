@@ -422,15 +422,33 @@ class TwitterWorker(BaseWorker):
         return result
 
     def _execute_follows(self, count: int):
-        """Follow target accounts."""
+        """Follow target accounts.
+
+        Iterates through ALL available targets (not just *count*).
+        Skips already-followed targets and tries the next one until
+        *count* new follows are done or targets are exhausted.
+        """
         done = 0
-        if count > 0 and self.targets:
-            self._log_activity("follow", "success", error_message=f"Iniciando {count} follows")
-        elif count > 0 and not self.targets:
-            self._log_activity("follow", "skipped", error_message="Nenhum alvo disponivel para follow")
-        for target in self._cycle_targets(count):
+        skipped_already = 0
+
+        if count <= 0:
+            return done
+
+        if not self.targets:
+            self._log_activity("follow", "skipped",
+                               error_message="Nenhum alvo disponivel para follow")
+            self._send("warning", message="Sem alvos disponiveis para follow. Adicione mais alvos.")
+            return done
+
+        self._log_activity("follow", "success",
+                           error_message=f"Iniciando {count} follows ({len(self.targets)} alvos disponiveis)")
+
+        for target in self._iter_available_targets():
             if not self.should_continue():
                 break
+            if done >= count:
+                break
+
             try:
                 target_user = target.get("username", "").lstrip("@")
                 self.driver.get(f"https://x.com/{target_user}")
@@ -453,23 +471,45 @@ class TwitterWorker(BaseWorker):
                 if follow_result is True:
                     done += 1
                     self._send("action_complete", action="follow", target=target_user, progress=done)
-                    self._log_activity("follow", "success", target_username=target_user, target_url=f"https://x.com/{target_user}")
+                    self._log_activity("follow", "success", target_username=target_user,
+                                       target_url=f"https://x.com/{target_user}")
                     self._record_action(target_user, "follow", getattr(self, "_current_day", 1))
                     logger.info(f"[{self.account['username']}] Followed @{target_user} ({done}/{count})")
                     time.sleep(random.uniform(1.5, 3.0))
                 elif follow_result == "already_following":
-                    self._log_activity("follow", "skipped", target_username=target_user, error_message="Ja segue este perfil")
-                    # Record so we don't try again on future runs
+                    skipped_already += 1
+                    self._log_activity("follow", "skipped", target_username=target_user,
+                                       error_message="Ja segue este perfil")
+                    # Record so we filter this target on future runs
                     self._record_action(target_user, "follow", getattr(self, "_current_day", 1))
-                    logger.info(f"[{self.account['username']}] Already following @{target_user}, skipped")
+                    logger.info(f"[{self.account['username']}] Already following @{target_user}, "
+                                f"skipped ({skipped_already} skipped so far)")
+                    # Remove from local list so it won't be tried again this session
+                    self.targets = [t for t in self.targets
+                                    if t.get("username", "").lstrip("@") != target_user]
                 else:
-                    self._log_activity("follow", "skipped", target_username=target_user, error_message="Botao Follow nao encontrado")
+                    self._log_activity("follow", "skipped", target_username=target_user,
+                                       error_message="Botao Follow nao encontrado")
                     logger.warning(f"Follow button not found for @{target_user}")
 
             except Exception as exc:
-                self._log_activity("follow", "failed", target_username=target_user, error_message=str(exc))
+                self._log_activity("follow", "failed", target_username=target_user,
+                                   error_message=str(exc))
                 logger.warning(f"Follow failed for {target.get('username')}: {exc}")
             self._random_delay()
+
+        # Notify if couldn't reach target count
+        if done < count:
+            msg = (f"Apenas {done}/{count} follows realizados. "
+                   f"{skipped_already} alvos ja seguidos. "
+                   f"Adicione mais alvos para a conta @{self.account['username']}.")
+            self._log_activity("follow", "warning", error_message=msg)
+            self._send("warning", message=msg)
+            logger.warning(f"[{self.account['username']}] {msg}")
+
+        if skipped_already > 0:
+            self._log_activity("follow", "success",
+                               error_message=f"Follows concluidos: {done} novos, {skipped_already} ja seguidos (pulados)")
 
         return done
 
@@ -680,6 +720,11 @@ class TwitterWorker(BaseWorker):
             if not self.targets:
                 return
             yield self.targets[i % len(self.targets)]
+
+    def _iter_available_targets(self):
+        """Yield all available targets once (no cycling). Used for follows."""
+        for target in list(self.targets):
+            yield target
 
     def _execute_likes_on_profiles(self, count: int):
         """Like tweets by visiting target profiles instead of the home feed."""
