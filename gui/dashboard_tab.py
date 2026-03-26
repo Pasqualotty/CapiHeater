@@ -74,7 +74,7 @@ class DashboardTab(ttk.Frame):
             columns=columns,
             show="headings",
             style="Dark.Treeview",
-            selectmode="browse",
+            selectmode="extended",
         )
 
         self._tree.heading("status_icon", text="")
@@ -97,14 +97,22 @@ class DashboardTab(ttk.Frame):
 
         # Per-account action buttons (context menu)
         self._tree.bind("<Button-3>", self._show_context_menu)
+        self._tree.bind("<Control-a>", self._select_all)
+        self._tree.bind("<<TreeviewSelect>>", self._on_selection_changed)
+
+        # Selection info
+        sel_frame = ttk.Frame(self, style="Dark.TFrame")
+        sel_frame.pack(fill=tk.X, padx=12, pady=(0, 2))
+        self._sel_info = tk.StringVar(value="")
+        ttk.Label(sel_frame, textvariable=self._sel_info, style="Dark.TLabel").pack(side=tk.LEFT)
 
         # Action buttons below tree
         action_frame = ttk.Frame(self, style="Dark.TFrame")
         action_frame.pack(fill=tk.X, padx=12, pady=(0, 12))
 
-        ttk.Button(action_frame, text="Iniciar Selecionada", style="Accent.TButton", command=self._start_selected).pack(side=tk.LEFT, padx=(0, 6))
-        ttk.Button(action_frame, text="Pausar Selecionada", style="Accent.TButton", command=self._pause_selected).pack(side=tk.LEFT, padx=(0, 6))
-        ttk.Button(action_frame, text="Parar Selecionada", style="Danger.TButton", command=self._stop_selected).pack(side=tk.LEFT)
+        ttk.Button(action_frame, text="Iniciar Selecionadas", style="Accent.TButton", command=self._start_selected).pack(side=tk.LEFT, padx=(0, 6))
+        ttk.Button(action_frame, text="Pausar Selecionadas", style="Accent.TButton", command=self._pause_selected).pack(side=tk.LEFT, padx=(0, 6))
+        ttk.Button(action_frame, text="Parar Selecionadas", style="Danger.TButton", command=self._stop_selected).pack(side=tk.LEFT)
 
     # ==================================================================
     # Data refresh
@@ -173,44 +181,59 @@ class DashboardTab(ttk.Frame):
         self.app.set_status("Todas as contas paradas")
         self.refresh()
 
-    def _get_selected_account_id(self) -> int | None:
+    def _get_selected_account_ids(self) -> list[int]:
+        """Return list of selected account IDs."""
         selection = self._tree.selection()
-        if not selection:
-            return None
-        iid = selection[0]
-        for aid, row_info in self._account_rows.items():
-            if row_info["iid"] == iid:
-                return aid
-        return None
+        ids = []
+        for iid in selection:
+            for aid, row_info in self._account_rows.items():
+                if row_info["iid"] == iid:
+                    ids.append(aid)
+                    break
+        return ids
+
+    def _select_all(self, _event=None) -> None:
+        self._tree.selection_set(self._tree.get_children())
+
+    def _on_selection_changed(self, _event=None) -> None:
+        count = len(self._tree.selection())
+        if count == 0:
+            self._sel_info.set("")
+        elif count == 1:
+            self._sel_info.set("1 conta selecionada")
+        else:
+            self._sel_info.set(f"{count} contas selecionadas")
 
     def _start_selected(self) -> None:
-        aid = self._get_selected_account_id()
-        if aid is None:
+        ids = self._get_selected_account_ids()
+        if not ids:
             self.app.set_status("Selecione uma conta primeiro")
             return
-        ok = self.app.engine.start_account(aid)
-        if ok:
-            self.app.set_status(f"Conta {aid} iniciada")
-        else:
-            self.app.set_status(f"Nao foi possivel iniciar conta {aid}")
+        started = 0
+        for aid in ids:
+            if self.app.engine.start_account(aid):
+                started += 1
+        self.app.set_status(f"{started} conta(s) iniciada(s)")
         self.refresh()
 
     def _pause_selected(self) -> None:
-        aid = self._get_selected_account_id()
-        if aid is None:
+        ids = self._get_selected_account_ids()
+        if not ids:
             self.app.set_status("Selecione uma conta primeiro")
             return
-        self.app.engine.pause_account(aid)
-        self.app.set_status(f"Conta {aid} pausada")
+        for aid in ids:
+            self.app.engine.pause_account(aid)
+        self.app.set_status(f"{len(ids)} conta(s) pausada(s)")
         self.refresh()
 
     def _stop_selected(self) -> None:
-        aid = self._get_selected_account_id()
-        if aid is None:
+        ids = self._get_selected_account_ids()
+        if not ids:
             self.app.set_status("Selecione uma conta primeiro")
             return
-        self.app.engine.stop_account(aid)
-        self.app.set_status(f"Conta {aid} parada")
+        for aid in ids:
+            self.app.engine.stop_account(aid)
+        self.app.set_status(f"{len(ids)} conta(s) parada(s)")
         self.refresh()
 
     def _show_context_menu(self, event) -> None:
@@ -218,7 +241,9 @@ class DashboardTab(ttk.Frame):
         iid = self._tree.identify_row(event.y)
         if not iid:
             return
-        self._tree.selection_set(iid)
+        # Only change selection on right-click if the clicked item isn't already selected
+        if iid not in self._tree.selection():
+            self._tree.selection_set(iid)
 
         menu = tk.Menu(self, tearoff=0, bg="#16213e", fg="#e0e0e0", activebackground="#0f3460")
         menu.add_command(label="Iniciar", command=self._start_selected)

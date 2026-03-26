@@ -25,6 +25,7 @@ from selenium.common.exceptions import (
 
 from workers.actions import selectors
 from utils.humanizer import random_delay, scroll_pause, jitter
+from utils.config import DEFAULT_SCROLL_CONFIG
 
 
 class BrowseFeedAction:
@@ -98,6 +99,7 @@ class BrowseFeedAction:
         view_comments_chance: float = 0.3,
         stop_check=None,
         on_event=None,
+        scroll_config: dict = None,
     ) -> dict:
         """Browse the feed for *duration_minutes*.
 
@@ -124,6 +126,8 @@ class BrowseFeedAction:
         posts_opened = 0
         comments_viewed = 0
         self._on_event = on_event
+        self._opened_urls: set[str] = set()
+        self._cfg = scroll_config or DEFAULT_SCROLL_CONFIG
         start = time.time()
         duration_secs = duration_minutes * 60
 
@@ -182,6 +186,7 @@ class BrowseFeedAction:
 
             # Pick a browsing behaviour for this iteration.
             # NO scroll_up — always advance forward.
+            cfg = self._cfg
             behaviour = random.choices(
                 [
                     "scroll_small",
@@ -190,27 +195,51 @@ class BrowseFeedAction:
                     "pause_read",
                     "distracted_pause",
                 ],
-                weights=[32, 28, 10, 22, 8],
+                weights=[
+                    cfg.get("weight_scroll_small", 32),
+                    cfg.get("weight_scroll_medium", 28),
+                    cfg.get("weight_scroll_large", 10),
+                    cfg.get("weight_pause_read", 22),
+                    cfg.get("weight_distracted_pause", 8),
+                ],
                 k=1,
             )[0]
 
             if behaviour == "scroll_small":
-                px = random.randint(200, 400)
+                px = random.randint(
+                    cfg.get("scroll_small_min", 200),
+                    cfg.get("scroll_small_max", 400),
+                )
                 drv.execute_script(f"window.scrollBy(0, {px});")
                 self._snap_to_nearest_tweet(drv)
-                self._reading_pause(drv)
+                random_delay(
+                    cfg.get("pause_after_small_min", 1.5),
+                    cfg.get("pause_after_small_max", 3.0),
+                )
 
             elif behaviour == "scroll_medium":
-                px = random.randint(450, 750)
+                px = random.randint(
+                    cfg.get("scroll_medium_min", 450),
+                    cfg.get("scroll_medium_max", 750),
+                )
                 drv.execute_script(f"window.scrollBy(0, {px});")
                 self._snap_to_nearest_tweet(drv)
-                random_delay(1.5, 3.0)
+                random_delay(
+                    cfg.get("pause_after_medium_min", 1.5),
+                    cfg.get("pause_after_medium_max", 3.0),
+                )
 
             elif behaviour == "scroll_large":
-                px = random.randint(800, 1400)
+                px = random.randint(
+                    cfg.get("scroll_large_min", 800),
+                    cfg.get("scroll_large_max", 1400),
+                )
                 drv.execute_script(f"window.scrollBy(0, {px});")
                 self._snap_to_nearest_tweet(drv)
-                random_delay(0.8, 1.5)
+                random_delay(
+                    cfg.get("pause_after_large_min", 0.8),
+                    cfg.get("pause_after_large_max", 1.5),
+                )
 
             elif behaviour == "pause_read":
                 # Linger on the current tweet as if reading it carefully.
@@ -218,14 +247,17 @@ class BrowseFeedAction:
 
             elif behaviour == "distracted_pause":
                 # Short pause — user got distracted.
-                pause = random.uniform(5, 12)
+                pause = random.uniform(
+                    cfg.get("distracted_pause_min", 5),
+                    cfg.get("distracted_pause_max", 12),
+                )
                 self.logger.debug("Pausa distraida de %.1fs", pause)
                 time.sleep(pause)
 
             scrolls += 1
 
             # Occasionally hover over a tweet (mouse movement).
-            if random.random() < 0.12:
+            if random.random() < cfg.get("hover_chance", 0.12):
                 self._hover_random_tweet(drv)
 
         elapsed = time.time() - start
@@ -393,6 +425,15 @@ class BrowseFeedAction:
                     time.sleep(0.5)
                     continue
 
+                # Skip if this post was already opened in this session
+                tweet_url = self._extract_tweet_url(target)
+                if tweet_url and tweet_url in self._opened_urls:
+                    self.logger.info("Post ja aberto nesta sessao, scrollando...")
+                    drv.execute_script("window.scrollBy(0, 600);")
+                    self._snap_to_nearest_tweet(drv)
+                    time.sleep(0.5)
+                    continue
+
                 # Click on the tweet text or timestamp to navigate to the post.
                 clickable = self._get_clickable_in_tweet(target)
                 if clickable is None:
@@ -425,8 +466,15 @@ class BrowseFeedAction:
 
                 random_delay(1.5, 3.0)
 
+                # Track this post as opened
+                self._opened_urls.add(drv.current_url.split("?")[0])
+
                 # "Read" the opened post.
-                read_time = random.uniform(5, 15)
+                cfg = self._cfg
+                read_time = random.uniform(
+                    cfg.get("post_read_time_min", 5),
+                    cfg.get("post_read_time_max", 15),
+                )
                 self.logger.info("Lendo post %d por %.1fs...", post_number, read_time)
                 self._emit("post_read", {
                     "post_number": post_number, "read_time": round(read_time, 1),
@@ -477,16 +525,22 @@ class BrowseFeedAction:
 
     def _find_center_tweet_element(self, drv: WebDriver, tweets):
         """Return the tweet WebElement closest to the viewport centre,
-        skipping promoted/ad tweets."""
+        skipping promoted/ad tweets and already-opened posts."""
         try:
             best = None
             best_dist = float("inf")
             vp_center = drv.execute_script("return window.innerHeight / 2;")
+            opened = getattr(self, "_opened_urls", set())
             for tweet in tweets:
                 try:
                     # Skip ads
                     if self._is_ad_tweet(drv, tweet):
                         continue
+                    # Skip already-opened posts
+                    if opened:
+                        url = self._extract_tweet_url(tweet)
+                        if url and url in opened:
+                            continue
                     rect = drv.execute_script(
                         "var r = arguments[0].getBoundingClientRect();"
                         "return {top: r.top, height: r.height};",
@@ -502,6 +556,18 @@ class BrowseFeedAction:
             return best
         except WebDriverException:
             return None
+
+    def _extract_tweet_url(self, tweet) -> str | None:
+        """Extract the /status/ URL from a tweet element for deduplication."""
+        try:
+            links = tweet.find_elements(By.CSS_SELECTOR, "a[href*='/status/']")
+            for link in links:
+                href = link.get_attribute("href")
+                if href and "/status/" in href:
+                    return href.split("?")[0]
+        except (StaleElementReferenceException, WebDriverException):
+            pass
+        return None
 
     def _get_clickable_in_tweet(self, tweet):
         """Find a clickable element inside a tweet to open the post detail.
@@ -534,17 +600,39 @@ class BrowseFeedAction:
         """
         num_comments = random.randint(3, 8)
         self.logger.info("Visualizando ~%d comentarios do post %d...", num_comments, post_number)
-        viewed = 0
 
+        # Scroll past the original post to reach comments area
+        initial_scroll = random.randint(600, 900)
+        drv.execute_script(f"window.scrollBy(0, {initial_scroll});")
+        random_delay(1.5, 3.0)
+
+        # Wait for reply tweets to appear
+        try:
+            WebDriverWait(drv, 5).until(
+                EC.presence_of_element_located(
+                    (By.CSS_SELECTOR, selectors.TWEET_ARTICLE)
+                )
+            )
+        except TimeoutException:
+            self.logger.info("Nenhum comentario encontrado no post %d", post_number)
+            return 0
+
+        viewed = 0
         for i in range(num_comments):
             if self._should_stop(stop_check):
                 break
 
-            px = random.randint(250, 500)
+            px = random.randint(300, 600)
             drv.execute_script(f"window.scrollBy(0, {px});")
 
-            # Snap to the nearest reply tweet.
+            # Snap to the nearest reply tweet
             self._snap_to_nearest_tweet(drv)
+
+            # Check if we actually have a tweet in view
+            tweets = drv.find_elements(By.CSS_SELECTOR, selectors.TWEET_ARTICLE)
+            if not tweets:
+                self.logger.info("Sem mais comentarios visiveis no post %d", post_number)
+                break
 
             viewed += 1
             self.logger.info(
@@ -556,10 +644,14 @@ class BrowseFeedAction:
                 "post_number": post_number,
             })
 
-            # "Read" the comment.
-            read_time = random.uniform(2.0, 6.0)
+            # "Read" the comment
+            cfg = self._cfg
+            read_time = random.uniform(
+                cfg.get("comment_read_time_min", 2.0),
+                cfg.get("comment_read_time_max", 6.0),
+            )
             time.sleep(read_time)
 
-        # Small pause before going back.
+        # Small pause before going back
         random_delay(1.0, 3.0)
         return viewed

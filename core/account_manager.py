@@ -122,6 +122,7 @@ class AccountManager:
     # ------------------------------------------------------------------
 
     def delete_account(self, account_id: int) -> None:
-        """Remove an account from the database."""
-        query = "DELETE FROM accounts WHERE id = ?"
-        self.db.execute(query, (account_id,))
+        """Remove an account and its related data from the database."""
+        # Delete activity_logs first (FK without CASCADE in legacy databases)
+        self.db.execute("DELETE FROM activity_logs WHERE account_id = ?", (account_id,))
+        self.db.execute("DELETE FROM accounts WHERE id = ?", (account_id,))

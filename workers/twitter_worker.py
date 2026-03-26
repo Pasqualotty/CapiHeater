@@ -628,6 +628,18 @@ class TwitterWorker(BaseWorker):
                     msg += f" (de {posts_to_open} planejados)"
                 self._log_activity("browse", status, error_message=msg)
 
+        # Load scroll config from settings
+        scroll_config = None
+        if self.db:
+            try:
+                row = self.db.fetch_one(
+                    "SELECT value FROM settings WHERE key = 'scroll_config'"
+                )
+                if row:
+                    scroll_config = json.loads(row["value"])
+            except Exception:
+                pass
+
         browser = BrowseFeedAction(self.driver, logger)
         browser.execute(
             duration_minutes=duration_min,
@@ -635,6 +647,7 @@ class TwitterWorker(BaseWorker):
             posts_to_open=posts_to_open,
             view_comments_chance=view_comments_chance,
             on_event=_on_browse_event,
+            scroll_config=scroll_config,
         )
         self._log_activity("browse", "success", error_message="Navegacao do feed concluida")
 

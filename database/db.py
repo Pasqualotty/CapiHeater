@@ -82,7 +82,7 @@ class Database:
                     status TEXT NOT NULL,
                     error_message TEXT DEFAULT NULL,
                     executed_at TEXT DEFAULT (datetime('now')),
-                    FOREIGN KEY (account_id) REFERENCES accounts(id)
+                    FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE
                 )
             """)
 
