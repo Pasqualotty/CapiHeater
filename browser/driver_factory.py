@@ -67,6 +67,20 @@ class DriverFactory:
                 options.add_argument(f"--proxy-server={proxy_cfg.scheme}://{proxy_cfg.host}:{proxy_cfg.port}")
 
         # Create driver - undetected_chromedriver handles anti-detection internally
-        driver = uc.Chrome(options=options)
+        # Detect installed Chrome major version to avoid driver/browser mismatch
+        try:
+            real_version = uc.find_chrome_executable()
+            import subprocess
+            out = subprocess.check_output(
+                f'wmic datafile where name="{real_version}" get Version /value',
+                shell=True, text=True,
+            )
+            # Parse "Version=146.0.7680.165" → 146
+            ver_line = [l for l in out.strip().splitlines() if "Version=" in l]
+            version_main = int(ver_line[0].split("=")[1].split(".")[0]) if ver_line else None
+        except Exception:
+            version_main = None
+
+        driver = uc.Chrome(options=options, version_main=version_main)
 
         return driver
