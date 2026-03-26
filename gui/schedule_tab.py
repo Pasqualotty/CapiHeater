@@ -413,6 +413,11 @@ class ScheduleTab(ttk.Frame):
                             insertbackground=fg, buttonbackground="#0f3460")
             sp.pack(side=tk.LEFT, padx=(8, 0))
 
+        # Variation hint
+        tk.Label(fields_frame,
+                 text="Os valores acima variam automaticamente em +/-20% para simular comportamento humano.",
+                 font=("Segoe UI", 8), bg=bg, fg="#888899", wraplength=340).pack(anchor="w", pady=(4, 0))
+
         # --- Feed browsing section ---
         tk.Label(fields_frame, text="Navegar pelo Feed (segundos)", font=("Segoe UI", 10, "bold"),
                  bg=bg, fg=section_fg).pack(anchor="w", pady=(12, 2))

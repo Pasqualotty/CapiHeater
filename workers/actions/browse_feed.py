@@ -39,6 +39,7 @@ class BrowseFeedAction:
     const articles = document.querySelectorAll('article[data-testid="tweet"]');
     if (!articles.length) return null;
     const viewportCenter = window.innerHeight / 2;
+    const currentScroll = window.scrollY;
     let closest = null;
     let minDist = Infinity;
     articles.forEach(a => {
@@ -52,7 +53,12 @@ class BrowseFeedAction:
         if (dist < minDist) { minDist = dist; closest = a; }
     });
     if (closest) {
-        closest.scrollIntoView({behavior: 'smooth', block: 'center'});
+        const rect = closest.getBoundingClientRect();
+        const targetScroll = window.scrollY + rect.top + rect.height / 2 - viewportCenter;
+        // Only snap FORWARD (down), never scroll back up
+        if (targetScroll >= currentScroll - 10) {
+            closest.scrollIntoView({behavior: 'smooth', block: 'center'});
+        }
     }
     return closest ? true : false;
     """
@@ -593,44 +599,68 @@ class BrowseFeedAction:
 
         return None
 
+    # JS: count reply tweets below the main post.
+    # On a /status/ page the first article is the main tweet; replies come after.
+    _JS_COUNT_REPLIES = """
+    const articles = document.querySelectorAll('article[data-testid="tweet"]');
+    if (articles.length <= 1) return 0;
+    return articles.length - 1;
+    """
+
     def _view_comments(self, drv: WebDriver, stop_check, post_number: int = 1) -> int:
         """Scroll down the post view to read a few comments/replies.
 
         Returns the number of comments actually viewed.
         """
-        num_comments = random.randint(3, 8)
-        self.logger.info("Visualizando ~%d comentarios do post %d...", num_comments, post_number)
-
         # Scroll past the original post to reach comments area
         initial_scroll = random.randint(600, 900)
         drv.execute_script(f"window.scrollBy(0, {initial_scroll});")
         random_delay(1.5, 3.0)
 
-        # Wait for reply tweets to appear
+        # Check if there are actual replies (not just the main tweet)
         try:
-            WebDriverWait(drv, 5).until(
-                EC.presence_of_element_located(
-                    (By.CSS_SELECTOR, selectors.TWEET_ARTICLE)
-                )
-            )
-        except TimeoutException:
+            reply_count = drv.execute_script(self._JS_COUNT_REPLIES) or 0
+        except WebDriverException:
+            reply_count = 0
+
+        if reply_count == 0:
             self.logger.info("Nenhum comentario encontrado no post %d", post_number)
             return 0
 
+        num_comments = min(random.randint(3, 8), reply_count + 2)  # +2 for lazy-loaded ones
+        self.logger.info(
+            "Visualizando ~%d comentarios do post %d (%d visiveis)...",
+            num_comments, post_number, reply_count,
+        )
+
         viewed = 0
+        last_scroll_y = drv.execute_script("return window.scrollY;")
+
         for i in range(num_comments):
             if self._should_stop(stop_check):
                 break
 
             px = random.randint(300, 600)
             drv.execute_script(f"window.scrollBy(0, {px});")
+            time.sleep(0.5)
+
+            # Check if scroll actually moved (end of page detection)
+            new_scroll_y = drv.execute_script("return window.scrollY;")
+            if new_scroll_y <= last_scroll_y:
+                self.logger.info("Fim dos comentarios no post %d", post_number)
+                break
+            last_scroll_y = new_scroll_y
 
             # Snap to the nearest reply tweet
             self._snap_to_nearest_tweet(drv)
 
-            # Check if we actually have a tweet in view
-            tweets = drv.find_elements(By.CSS_SELECTOR, selectors.TWEET_ARTICLE)
-            if not tweets:
+            # Check if we actually have reply tweets in view
+            try:
+                current_replies = drv.execute_script(self._JS_COUNT_REPLIES) or 0
+            except WebDriverException:
+                current_replies = 0
+
+            if current_replies == 0:
                 self.logger.info("Sem mais comentarios visiveis no post %d", post_number)
                 break
 
