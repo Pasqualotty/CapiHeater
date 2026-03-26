@@ -21,6 +21,54 @@ class DriverFactory:
         (1280, 720),
     ]
 
+    @staticmethod
+    def _detect_chrome_version() -> int | None:
+        """Detect the major version of the installed Chrome browser."""
+        import subprocess
+        import os
+
+        chrome_path = None
+        # Common Chrome locations on Windows
+        for path in [
+            os.path.join(os.environ.get("PROGRAMFILES", ""), "Google", "Chrome", "Application", "chrome.exe"),
+            os.path.join(os.environ.get("PROGRAMFILES(X86)", ""), "Google", "Chrome", "Application", "chrome.exe"),
+            os.path.join(os.environ.get("LOCALAPPDATA", ""), "Google", "Chrome", "Application", "chrome.exe"),
+        ]:
+            if os.path.exists(path):
+                chrome_path = path
+                break
+
+        if not chrome_path:
+            try:
+                chrome_path = uc.find_chrome_executable()
+            except Exception:
+                return None
+
+        # Use PowerShell to get the file version (most reliable on Windows)
+        try:
+            out = subprocess.check_output(
+                ["powershell", "-Command",
+                 f"(Get-Item '{chrome_path}').VersionInfo.FileVersion"],
+                text=True, timeout=10,
+            )
+            return int(out.strip().split(".")[0])
+        except Exception:
+            pass
+
+        # Fallback: run chrome --version
+        try:
+            out = subprocess.check_output(
+                [chrome_path, "--version"], text=True, timeout=10,
+            )
+            # "Google Chrome 146.0.7680.165" → 146
+            for part in out.strip().split():
+                if "." in part:
+                    return int(part.split(".")[0])
+        except Exception:
+            pass
+
+        return None
+
     @classmethod
     def create_driver(cls, headless: bool = False, proxy: str = None) -> uc.Chrome:
         """Create and return a configured undetected Chrome WebDriver.
@@ -68,18 +116,7 @@ class DriverFactory:
 
         # Create driver - undetected_chromedriver handles anti-detection internally
         # Detect installed Chrome major version to avoid driver/browser mismatch
-        try:
-            real_version = uc.find_chrome_executable()
-            import subprocess
-            out = subprocess.check_output(
-                f'wmic datafile where name="{real_version}" get Version /value',
-                shell=True, text=True,
-            )
-            # Parse "Version=146.0.7680.165" → 146
-            ver_line = [l for l in out.strip().splitlines() if "Version=" in l]
-            version_main = int(ver_line[0].split("=")[1].split(".")[0]) if ver_line else None
-        except Exception:
-            version_main = None
+        version_main = cls._detect_chrome_version()
 
         driver = uc.Chrome(options=options, version_main=version_main)
 
