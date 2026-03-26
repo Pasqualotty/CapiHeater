@@ -51,6 +51,25 @@ class Scheduler:
         # Day 1 is the start date itself
         return max(1, delta + 1)
 
+    @classmethod
+    def get_schedule_length(cls, schedule_json) -> int:
+        """Return the number of the last day defined in the schedule.
+
+        Parameters
+        ----------
+        schedule_json : str | list
+            The JSON schedule (string or already-parsed list).
+
+        Returns
+        -------
+        int
+            The last day number (e.g. 14 for a 14-day schedule, 1 for single-day).
+        """
+        schedule = cls._parse_schedule(schedule_json)
+        if not schedule:
+            return 1
+        return schedule[-1].get("day", 1)
+
     # ------------------------------------------------------------------
     # Core method
     # ------------------------------------------------------------------

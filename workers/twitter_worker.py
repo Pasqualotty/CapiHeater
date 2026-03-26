@@ -440,7 +440,8 @@ class TwitterWorker(BaseWorker):
                 page_status = self._handle_profile_page()
                 if page_status in ("not_found", "suspended"):
                     self._log_activity("follow", "skipped", target_username=target_user,
-                                       error_message=f"Perfil {page_status}")
+                                       error_message=f"Perfil {page_status} - alvo removido")
+                    self._remove_target(target_user, page_status)
                     self._random_delay()
                     continue
 
@@ -655,11 +656,29 @@ class TwitterWorker(BaseWorker):
     # Utility
     # ------------------------------------------------------------------
 
+    def _remove_target(self, username: str, reason: str) -> None:
+        """Permanently remove a target from the database and local list."""
+        clean_user = username.lstrip("@")
+        logger.info(f"[{self.account['username']}] Removendo alvo @{clean_user} ({reason})")
+
+        # Remove from database
+        if self.db:
+            try:
+                self.db.execute(
+                    "DELETE FROM targets WHERE username = ?", (clean_user,)
+                )
+            except Exception as exc:
+                logger.debug(f"Erro ao remover alvo do banco: {exc}")
+
+        # Remove from local list
+        self.targets = [t for t in self.targets
+                        if t.get("username", "").lstrip("@") != clean_user]
+
     def _cycle_targets(self, count: int):
         """Yield *count* targets, cycling through the list if necessary."""
-        if not self.targets:
-            return
         for i in range(count):
+            if not self.targets:
+                return
             yield self.targets[i % len(self.targets)]
 
     def _execute_likes_on_profiles(self, count: int):
@@ -681,7 +700,8 @@ class TwitterWorker(BaseWorker):
                 page_status = self._handle_profile_page()
                 if page_status in ("not_found", "suspended"):
                     self._log_activity("like", "skipped", target_username=target_user,
-                                       error_message=f"Perfil {page_status}")
+                                       error_message=f"Perfil {page_status} - alvo removido")
+                    self._remove_target(target_user, page_status)
                     self._random_delay()
                     continue
 
@@ -879,9 +899,25 @@ class TwitterWorker(BaseWorker):
             # Update current_day and status in the database
             if self.db:
                 try:
+                    schedule_length = Scheduler.get_schedule_length(self.schedule_json)
+                    capped_day = min(day_number, schedule_length)
+
+                    if capped_day >= schedule_length:
+                        # Last day (or only day) of schedule — mark as completed
+                        save_day = schedule_length
+                        save_status = "completed"
+                    else:
+                        # More days ahead — advance to next day, set idle for next run
+                        save_day = capped_day + 1
+                        save_status = "idle"
+
                     self.db.execute(
-                        "UPDATE accounts SET current_day = ?, status = 'completed' WHERE id = ?",
-                        (day_number, account_id),
+                        "UPDATE accounts SET current_day = ?, status = ? WHERE id = ?",
+                        (save_day, save_status, account_id),
+                    )
+                    logger.info(
+                        f"[{username}] Dia {capped_day}/{schedule_length} concluido -> "
+                        f"current_day={save_day}, status={save_status}"
                     )
                 except Exception:
                     pass
