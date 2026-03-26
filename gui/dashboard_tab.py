@@ -3,7 +3,8 @@ DashboardTab - Overview of all accounts and quick controls.
 """
 
 import tkinter as tk
-from tkinter import ttk
+from tkinter import ttk, messagebox, simpledialog
+from datetime import date, timedelta
 
 from gui.widgets.status_indicator import StatusIndicator, STATUS_COLORS
 from gui.widgets.account_card import AccountCard
@@ -249,7 +250,46 @@ class DashboardTab(ttk.Frame):
         menu.add_command(label="Iniciar", command=self._start_selected)
         menu.add_command(label="Pausar", command=self._pause_selected)
         menu.add_command(label="Parar", command=self._stop_selected)
+        menu.add_separator()
+        menu.add_command(label="Editar Dia", command=self._edit_day)
         menu.tk_popup(event.x_root, event.y_root)
+
+    def _edit_day(self) -> None:
+        """Let the user change which warming day an account will run next."""
+        ids = self._get_selected_account_ids()
+        if len(ids) != 1:
+            self.app.set_status("Selecione exatamente uma conta para editar o dia")
+            return
+
+        aid = ids[0]
+        account = self._account_rows[aid]["account"]
+        status = account.get("status", "idle")
+
+        if status in ("running", "paused"):
+            messagebox.showwarning(
+                "Aviso", "Pare a conta antes de editar o dia.", parent=self,
+            )
+            return
+
+        current = account.get("current_day", 1)
+        new_day = simpledialog.askinteger(
+            "Editar Dia",
+            f"Dia atual: {current}\nNovo dia:",
+            initialvalue=current,
+            minvalue=1,
+            maxvalue=365,
+            parent=self,
+        )
+        if new_day is None or new_day == current:
+            return
+
+        # Back-calculate start_date so Scheduler.get_day_number() returns new_day
+        new_start = (date.today() - timedelta(days=new_day - 1)).isoformat()
+        self.app.account_manager.update_account(
+            aid, current_day=new_day, start_date=new_start,
+        )
+        self.app.set_status(f"Dia alterado para {new_day}")
+        self.refresh()
 
     # ==================================================================
     # Helpers

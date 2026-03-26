@@ -4,11 +4,17 @@ with anti-detection measures and configurable options.
 """
 
 import random
+import threading
+
 import undetected_chromedriver as uc
 
 
 class DriverFactory:
     """Factory for creating configured undetected Chrome WebDriver instances."""
+
+    # Serialize browser creation — uc.Chrome() patches the Chrome binary
+    # in a shared temp directory.  Concurrent calls corrupt the patch.
+    _creation_lock = threading.Lock()
 
     # Common desktop viewport sizes to randomize window dimensions
     _VIEWPORTS = [
@@ -118,6 +124,8 @@ class DriverFactory:
         # Detect installed Chrome major version to avoid driver/browser mismatch
         version_main = cls._detect_chrome_version()
 
-        driver = uc.Chrome(options=options, version_main=version_main)
+        # Lock ensures only one uc.Chrome() runs at a time (patch race fix)
+        with cls._creation_lock:
+            driver = uc.Chrome(options=options, version_main=version_main)
 
         return driver

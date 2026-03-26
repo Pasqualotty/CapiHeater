@@ -56,6 +56,9 @@ class TwitterWorker(BaseWorker):
         self.driver_factory = driver_factory
         self.driver = None
         self.db = db
+        # Set by engine when a new worker replaces this one — prevents
+        # the finally safety-net from overwriting the new worker's status.
+        self._superseded = False
 
     # ------------------------------------------------------------------
     # Queue messaging helpers
@@ -286,6 +289,31 @@ class TwitterWorker(BaseWorker):
         except Exception as exc:
             logger.debug(f"_handle_profile_page error: {exc}")
             return "ok"
+
+    def force_stop(self) -> None:
+        """Force-stop by killing the chromedriver process directly.
+
+        Use when the worker is stuck in a Selenium call and ``stop()``
+        alone cannot unblock it (driver.quit() would also hang).
+        """
+        self._stop_event.set()
+        self._pause_event.set()
+        if self.driver:
+            try:
+                service = getattr(self.driver, "service", None)
+                proc = getattr(service, "process", None) if service else None
+                if proc and proc.pid:
+                    import os
+                    import signal
+                    os.kill(proc.pid, signal.SIGTERM)
+                    logger.info(
+                        f"[{self.account.get('username', '?')}] "
+                        f"Force-killed chromedriver PID {proc.pid}"
+                    )
+            except Exception as exc:
+                logger.warning(f"force_stop driver kill failed: {exc}")
+            finally:
+                self.driver = None
 
     def _close_browser(self):
         """Safely close and quit the browser."""
@@ -985,3 +1013,20 @@ class TwitterWorker(BaseWorker):
         finally:
             self._close_browser()
             self._log_activity("sistema", "success", error_message="Browser fechado")
+            # Safety net: never leave status as "running" after thread exits.
+            # Skip if a newer worker already replaced us (avoids overwriting
+            # the new worker's "running" status).
+            if self.db and not self._superseded:
+                try:
+                    row = self.db.fetch_one(
+                        "SELECT status FROM accounts WHERE id = ?",
+                        (account_id,),
+                    )
+                    if row and row.get("status") == "running":
+                        self.db.execute(
+                            "UPDATE accounts SET status = 'idle' WHERE id = ?",
+                            (account_id,),
+                        )
+                        logger.info(f"[{username}] Safety net: reset stuck 'running' → 'idle'")
+                except Exception:
+                    pass

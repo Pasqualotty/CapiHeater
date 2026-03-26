@@ -177,6 +177,7 @@ class AutoUpdater:
     def _apply_via_batch(target_exe: str, new_exe_tmp: str) -> None:
         """Create and run a batch script that swaps executables."""
         running_exe = os.path.abspath(sys.executable)
+        running_pid = os.getpid()
         exe_dir = os.path.dirname(target_exe)
 
         bat_fd, bat_path = tempfile.mkstemp(suffix=".bat")
@@ -191,46 +192,88 @@ class AutoUpdater:
         old_backup = target_exe + ".old"
         old_esc = old_backup.replace("/", "\\")
 
+        log_path = os.path.join(exe_dir, "_update.log").replace("/", "\\")
+
+        # ping -n N waits (N-1) seconds — works without a console window,
+        # unlike 'timeout' which fails silently under CREATE_NO_WINDOW.
+        wait_2s = "ping -n 3 127.0.0.1 >nul 2>&1"
+
         script = (
             "@echo off\n"
-            "echo Atualizando CapiHeater...\n"
-            "timeout /t 3 /nobreak >nul\n"
-            # Delete any previous .old backup
-            f'del /f "{old_esc}" 2>nul\n'
-            # Rename the running exe (Windows allows renaming a locked exe)
-            ":rename_old\n"
-            f'ren "{target_esc}" "CapiHeater.exe.old" 2>nul\n'
-            f'if exist "{target_esc}" (\n'
-            "    timeout /t 2 /nobreak >nul\n"
-            "    goto rename_old\n"
+            f'echo [%date% %time%] Update script started >> "{log_path}"\n'
+            f'echo   target  = {target_esc} >> "{log_path}"\n'
+            f'echo   new_tmp = {new_tmp_esc} >> "{log_path}"\n'
+            f'echo   running = {running_esc} (PID {running_pid}) >> "{log_path}"\n'
+            # --- Wait for the parent process to fully exit ---
+            # Poll until the PID is gone (max ~30 seconds)
+            ":wait_exit\n"
+            f'tasklist /FI "PID eq {running_pid}" 2>nul | find "{running_pid}" >nul 2>&1\n'
+            "if %errorlevel%==0 (\n"
+            f"    {wait_2s}\n"
+            "    goto wait_exit\n"
             ")\n"
-            # Move new exe into place (target name is now free)
-            f'move /y "{new_tmp_esc}" "{target_esc}" >nul\n'
-            # Clean up old backup (may fail if still locked, that's ok)
+            f'echo [%date% %time%] Parent process exited >> "{log_path}"\n'
+            # Extra 1-second grace period for file handles to release
+            "ping -n 2 127.0.0.1 >nul 2>&1\n"
+            # --- Delete any previous .old backup ---
             f'del /f "{old_esc}" 2>nul\n'
-            # Also delete the old running exe if it's different from target
+            # --- Rename current exe out of the way ---
+            "set RETRIES=0\n"
+            ":rename_old\n"
+            f'if not exist "{target_esc}" goto do_move\n'
+            f'ren "{target_esc}" "CapiHeater.exe.old" 2>nul\n'
+            f'if not exist "{target_esc}" goto do_move\n'
+            "set /a RETRIES+=1\n"
+            f'echo [%date% %time%] rename attempt %RETRIES% failed >> "{log_path}"\n'
+            "if %RETRIES% GEQ 10 goto force_copy\n"
+            f"{wait_2s}\n"
+            "goto rename_old\n"
+            # --- Move new exe into place ---
+            ":do_move\n"
+            f'echo [%date% %time%] Moving new exe into place >> "{log_path}"\n'
+            f'move /y "{new_tmp_esc}" "{target_esc}"\n'
+            "if errorlevel 1 (\n"
+            f'    echo [%date% %time%] MOVE FAILED, trying copy >> "{log_path}"\n'
+            "    goto force_copy\n"
+            ")\n"
+            f'echo [%date% %time%] Move succeeded >> "{log_path}"\n'
+            "goto cleanup\n"
+            # --- Fallback: copy over the target if rename+move failed ---
+            ":force_copy\n"
+            f'echo [%date% %time%] Falling back to copy >> "{log_path}"\n'
+            f'copy /y "{new_tmp_esc}" "{target_esc}" >nul 2>&1\n'
+            "if errorlevel 1 (\n"
+            f'    echo [%date% %time%] COPY ALSO FAILED >> "{log_path}"\n'
+            "    goto cleanup\n"
+            ")\n"
+            f'del /f "{new_tmp_esc}" 2>nul\n'
+            f'echo [%date% %time%] Copy succeeded >> "{log_path}"\n'
+            # --- Cleanup ---
+            ":cleanup\n"
+            f'del /f "{old_esc}" 2>nul\n'
             f'if /i not "{running_esc}"=="{target_esc}" (\n'
             f'    del /f "{running_esc}" 2>nul\n'
             ")\n"
-            # Clean up ALL leftover tmp*.exe in the directory
-            # Use pushd/popd to avoid spaces in path breaking the for loop
             f'pushd "{dir_esc}"\n'
-            f"for %%F in (tmp*.exe) do del /f \"%%F\" 2>nul\n"
+            f'for %%F in (tmp*.exe) do del /f "%%F" 2>nul\n'
             f'del /f "CapiHeater.exe.old" 2>nul\n'
             f"popd\n"
-            # Launch the updated exe
+            f'echo [%date% %time%] Launching updated exe >> "{log_path}"\n'
             f'start "" "{target_esc}"\n'
-            # Delete this batch script
+            f'echo [%date% %time%] Done >> "{log_path}"\n'
             f'del /f "{bat_esc}"\n'
         )
 
         with open(bat_path, "w", encoding="utf-8") as f:
             f.write(script)
 
+        # CREATE_NO_WINDOW (not DETACHED_PROCESS): allocates a hidden
+        # console so cmd.exe built-ins work.  DETACHED_PROCESS gives
+        # cmd.exe NO console at all, which broke 'timeout' silently.
         subprocess.Popen(
             ["cmd.exe", "/c", bat_path],
             creationflags=subprocess.CREATE_NEW_PROCESS_GROUP
-            | subprocess.DETACHED_PROCESS,
+            | subprocess.CREATE_NO_WINDOW,
             close_fds=True,
         )
         logger.info("Update batch script launched — exiting current process.")

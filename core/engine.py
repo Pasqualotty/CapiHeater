@@ -93,11 +93,34 @@ class Engine:
         is already running.
         """
         with self._lock:
-            # Already running?
+            # Purge dead workers to free slots and avoid stale refs
+            dead = [aid for aid, w in self._workers.items() if not w.is_alive()]
+            for aid in dead:
+                del self._workers[aid]
+
+            # If a worker is still alive (stuck), force-stop it
             existing = self._workers.get(account_id)
             if existing and existing.is_alive():
-                logger.warning(f"Account {account_id} is already running.")
-                return False
+                logger.warning(
+                    f"Account {account_id} has a stuck worker — force-stopping."
+                )
+                existing._superseded = True  # prevent safety-net from resetting status
+                existing.stop()
+                if hasattr(existing, "force_stop"):
+                    existing.force_stop()
+                # Release lock while waiting so the worker's finally block
+                # can run without deadlocking.
+                self._lock.release()
+                try:
+                    existing.join(timeout=5)
+                finally:
+                    self._lock.acquire()
+                if existing.is_alive():
+                    logger.error(
+                        f"Account {account_id} worker did not die after "
+                        f"force-stop — abandoning daemon thread."
+                    )
+                del self._workers[account_id]
 
             if self._active_count_unlocked() >= self.max_concurrent:
                 logger.warning(
@@ -111,7 +134,13 @@ class Engine:
                 logger.error(f"Account {account_id} not found.")
                 return False
 
-            worker = self._build_worker(account)
+            try:
+                worker = self._build_worker(account)
+            except Exception as exc:
+                logger.error(f"Failed to build worker for account {account_id}: {exc}")
+                self.account_manager.update_status(account_id, "error")
+                return False
+
             self._workers[account_id] = worker
             worker.start()
 

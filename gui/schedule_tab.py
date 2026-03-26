@@ -61,6 +61,8 @@ class ScheduleTab(ttk.Frame):
                    command=self._on_edit_day).pack(side=tk.LEFT, padx=(0, 6))
         ttk.Button(btn_frame, text="Adicionar Dia", style="Accent.TButton",
                    command=self._on_add_day).pack(side=tk.LEFT, padx=(0, 6))
+        ttk.Button(btn_frame, text="Duplicar Dia", style="Accent.TButton",
+                   command=self._on_duplicate_day).pack(side=tk.LEFT, padx=(0, 6))
         ttk.Button(btn_frame, text="Remover Dia", style="Accent.TButton",
                    command=self._on_remove_day).pack(side=tk.LEFT, padx=(0, 6))
         ttk.Button(btn_frame, text="Excluir Cronograma", style="Danger.TButton",
@@ -250,6 +252,40 @@ class ScheduleTab(ttk.Frame):
         if result:
             days.append(result)
             self._save_schedule_days(schedule, days)
+
+    def _on_duplicate_day(self) -> None:
+        """Duplicate the selected day, inserting the copy right after it."""
+        schedule = self._current_schedule()
+        if not schedule:
+            return
+
+        selected = self._tree.selection()
+        if not selected:
+            messagebox.showwarning("Aviso", "Selecione um dia para duplicar.", parent=self)
+            return
+
+        item = self._tree.item(selected[0])
+        day_str = str(item["values"][0]).replace("Dia ", "")
+
+        days = self._parse_days(schedule)
+        day_idx = None
+        for i, d in enumerate(days):
+            if str(d.get("day", "")) == day_str:
+                day_idx = i
+                break
+
+        if day_idx is None:
+            return
+
+        # Shallow copy is fine — all values are scalars
+        new_day = dict(days[day_idx])
+        days.insert(day_idx + 1, new_day)
+
+        # Renumber sequentially
+        for i, d in enumerate(days):
+            d["day"] = i + 1
+
+        self._save_schedule_days(schedule, days)
 
     def _on_remove_day(self) -> None:
         """Remove the selected day."""
