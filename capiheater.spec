@@ -13,28 +13,13 @@ This produces a single .exe with:
 
 import os
 import sys
+import glob
 
 block_cipher = None
 
 # Resolve paths relative to this spec file
 # SPECPATH is the full path to THIS .spec file
 _SPEC_DIR = os.path.dirname(SPECPATH) if os.path.isfile(SPECPATH) else SPECPATH
-
-# Force-bundle VC runtime DLLs that PyInstaller skips (it treats them
-# as "system" DLLs).  The CI workflow copies them into _SPEC_DIR before
-# building; we also search the Python install dir and System32 as
-# fallbacks so local builds work too.
-_VC_DLLS = ["vcruntime140.dll", "vcruntime140_1.dll"]
-_VC_BINARIES = []
-for _dll in _VC_DLLS:
-    for _search in [
-        os.path.join(_SPEC_DIR, _dll),                        # copied by CI
-        os.path.join(os.path.dirname(sys.executable), _dll),  # Python dir
-        os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32", _dll),
-    ]:
-        if os.path.isfile(_search):
-            _VC_BINARIES.append((_search, "."))
-            break
 
 # Icon path (use None if icon doesn't exist yet)
 _ICON = os.path.join(_SPEC_DIR, "assets", "icon.ico")
@@ -44,7 +29,7 @@ if not os.path.isfile(_ICON):
 a = Analysis(
     [os.path.join(_SPEC_DIR, "main.py")],
     pathex=[_SPEC_DIR],
-    binaries=_VC_BINARIES,
+    binaries=[],
     datas=[
         # Bundle the default schedule JSON so db.py can find it
         (os.path.join(_SPEC_DIR, "schedules", "default_schedule.json"), "schedules"),
@@ -132,6 +117,29 @@ a = Analysis(
     noarchive=False,
 )
 
+# ── Force-bundle VC runtime DLLs ──────────────────────────────────────
+# PyInstaller's Analysis step filters out vcruntime140.dll and
+# vcruntime140_1.dll as "system" DLLs.  We add them back AFTER
+# Analysis so they cannot be removed.  Without these, the onefile
+# exe fails with "Failed to load Python DLL" on machines that don't
+# have the VC++ Redistributable installed (or in the DLL search path
+# of the _MEI temp extraction dir).
+_python_dir = os.path.dirname(sys.executable)
+_system32 = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32")
+_vc_dlls = ["vcruntime140.dll", "vcruntime140_1.dll"]
+for _dll_name in _vc_dlls:
+    # Already included by Analysis? Skip.
+    if any(_dll_name.lower() == name.lower() for name, _, _ in a.binaries):
+        continue
+    # Search: Python dir first, then project dir (CI copies them here),
+    # then System32 as last resort.
+    for _search_dir in [_python_dir, _SPEC_DIR, _system32]:
+        _dll_path = os.path.join(_search_dir, _dll_name)
+        if os.path.isfile(_dll_path):
+            a.binaries.append((_dll_name, _dll_path, "BINARY"))
+            print(f"  -> Force-bundled {_dll_name} from {_dll_path}")
+            break
+
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 
 exe = EXE(
@@ -146,7 +154,7 @@ exe = EXE(
     bootloader_ignore_signals=False,
     strip=False,
     upx=True,
-    upx_exclude=[],
+    upx_exclude=["vcruntime140.dll", "vcruntime140_1.dll"],
     runtime_tmpdir=None,
     console=False,          # --windowed: no terminal window
     disable_windowed_traceback=False,
