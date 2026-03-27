@@ -141,6 +141,11 @@ class Database:
             if "scroll_config" not in cols:
                 cursor.execute("ALTER TABLE accounts ADD COLUMN scroll_config TEXT DEFAULT NULL")
 
+            # Reset accounts stuck as 'running' from a previous crashed session
+            cursor.execute(
+                "UPDATE accounts SET status = 'idle' WHERE status IN ('running', 'stopping')"
+            )
+
             # Insert default schedules if none exist
             cursor.execute("SELECT COUNT(*) FROM schedules")
             if cursor.fetchone()[0] == 0:
