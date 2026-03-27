@@ -93,7 +93,7 @@ def main():
     print(f"PyInstaller archive: {len(entries)} entries")
 
     # Check for critical DLLs
-    critical = ["python312.dll", "vcruntime140.dll"]
+    critical = ["python311.dll", "vcruntime140.dll"]
     all_found = True
     for dll in critical:
         found = any(dll.lower() in e.lower() for e in entries)
