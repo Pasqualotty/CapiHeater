@@ -215,14 +215,17 @@ class AccountsTab(ttk.Frame):
         self._open_account_form(title="Adicionar Conta", account=None)
 
     def _edit_account_dialog(self) -> None:
-        aid = self._get_selected_id()
-        if aid is None:
-            messagebox.showwarning("Aviso", "Selecione uma conta para editar.", parent=self)
+        ids = self._get_selected_ids()
+        if not ids:
+            messagebox.showwarning("Aviso", "Selecione uma ou mais contas para editar.", parent=self)
             return
-        account = self.app.account_manager.get_account(aid)
-        if account is None:
-            return
-        self._open_account_form(title="Editar Conta", account=account)
+        if len(ids) == 1:
+            account = self.app.account_manager.get_account(ids[0])
+            if account is None:
+                return
+            self._open_account_form(title="Editar Conta", account=account)
+        else:
+            self._open_bulk_edit_form(ids)
 
     def _open_account_form(self, title: str, account: dict | None) -> None:
         dlg = tk.Toplevel(self)
@@ -416,6 +419,142 @@ class AccountsTab(ttk.Frame):
             self.refresh()
 
         ttk.Button(dlg, text="Salvar", style="Accent.TButton", command=save).pack(pady=12)
+
+    # ==================================================================
+    # Bulk edit
+    # ==================================================================
+
+    def _open_bulk_edit_form(self, account_ids: list[int]) -> None:
+        """Edit shared fields across multiple accounts at once."""
+        count = len(account_ids)
+        dlg = tk.Toplevel(self)
+        dlg.title(f"Editar {count} Contas")
+        dlg.geometry("460x480")
+        dlg.configure(bg="#1a1a2e")
+        dlg.resizable(False, False)
+        dlg.grab_set()
+
+        pad = {"padx": 12, "pady": 4}
+        bg = "#1a1a2e"
+
+        ttk.Label(
+            dlg,
+            text=f"Editando {count} contas simultaneamente",
+            style="Heading.TLabel",
+        ).pack(anchor=tk.W, padx=12, pady=(12, 4))
+
+        ttk.Label(
+            dlg,
+            text="Apenas os campos alterados serao aplicados.\n"
+                 "Deixe em branco ou no padrao para nao alterar.",
+            style="Dark.TLabel",
+        ).pack(anchor=tk.W, padx=12, pady=(0, 8))
+
+        # Proxy
+        ttk.Label(dlg, text="Proxy (deixe vazio para nao alterar):", style="Dark.TLabel").pack(anchor=tk.W, **pad)
+        ent_proxy = ttk.Entry(dlg, style="Dark.TEntry", width=40)
+        ent_proxy.pack(**pad)
+
+        # Schedule
+        ttk.Label(dlg, text="Cronograma:", style="Dark.TLabel").pack(anchor=tk.W, **pad)
+        schedule_names = self._get_schedule_names()
+        schedule_list = ["— Nao alterar —"] + list(schedule_names.values())
+        schedule_ids = [None] + list(schedule_names.keys())
+        combo_sched = ttk.Combobox(dlg, values=schedule_list, state="readonly", style="Dark.TCombobox", width=37)
+        combo_sched.pack(**pad)
+        combo_sched.current(0)
+
+        # Categories
+        ttk.Label(dlg, text="Categorias (selecione para SUBSTITUIR, vazio = nao alterar):", style="Dark.TLabel").pack(anchor=tk.W, **pad)
+        cat_names = self.app.category_manager.get_category_names()
+        cat_list = list(cat_names.values())
+        cat_ids = list(cat_names.keys())
+
+        cat_listbox = tk.Listbox(
+            dlg, selectmode=tk.MULTIPLE, height=4, width=40,
+            bg="#0d1b2a", fg="#e0e0e0", selectbackground="#1a73e8",
+            relief="flat", highlightthickness=0,
+        )
+        cat_listbox.pack(**pad)
+        for name in cat_list:
+            cat_listbox.insert(tk.END, name)
+
+        # Scroll config
+        ttk.Label(dlg, text="Perfil de rolagem:", style="Dark.TLabel").pack(anchor=tk.W, **pad)
+        scroll_options = ["— Nao alterar —", "Padrao Global", "Lento", "Normal", "Rapido"]
+        combo_scroll = ttk.Combobox(dlg, values=scroll_options, state="readonly", style="Dark.TCombobox", width=37)
+        combo_scroll.pack(**pad)
+        combo_scroll.current(0)
+
+        # Notes
+        ttk.Label(dlg, text="Notas (deixe vazio para nao alterar):", style="Dark.TLabel").pack(anchor=tk.W, **pad)
+        txt_notes = tk.Text(dlg, height=3, width=40, bg="#0d1b2a", fg="#e0e0e0", insertbackground="#e0e0e0", relief="flat")
+        txt_notes.pack(**pad)
+
+        def save():
+            updates = {}
+            changed = 0
+
+            # Proxy
+            proxy_val = ent_proxy.get().strip()
+            if proxy_val:
+                updates["proxy"] = proxy_val
+                changed += 1
+
+            # Schedule
+            sched_idx = combo_sched.current()
+            sched_id = schedule_ids[sched_idx]
+            if sched_id is not None:
+                updates["schedule_id"] = sched_id
+                changed += 1
+
+            # Scroll config
+            scroll_choice = combo_scroll.get()
+            if scroll_choice != "— Nao alterar —":
+                if scroll_choice == "Padrao Global":
+                    updates["scroll_config"] = None
+                else:
+                    preset_data = SCROLL_PRESETS.get(scroll_choice)
+                    updates["scroll_config"] = json.dumps(preset_data if preset_data else DEFAULT_SCROLL_CONFIG)
+                changed += 1
+
+            # Notes
+            notes_val = txt_notes.get("1.0", tk.END).strip()
+            if notes_val:
+                updates["notes"] = notes_val
+                changed += 1
+
+            # Categories
+            selected_cat_ids = [cat_ids[i] for i in cat_listbox.curselection()]
+            cat_changed = len(cat_listbox.curselection()) > 0
+
+            if changed == 0 and not cat_changed:
+                messagebox.showinfo("Info", "Nenhum campo foi alterado.", parent=dlg)
+                return
+
+            for aid in account_ids:
+                if updates:
+                    self.app.account_manager.update_account(aid, **updates)
+                if cat_changed:
+                    self.app.category_manager.set_account_categories(aid, selected_cat_ids)
+
+            fields = []
+            if "proxy" in updates:
+                fields.append("proxy")
+            if "schedule_id" in updates:
+                fields.append("cronograma")
+            if "scroll_config" in updates:
+                fields.append("rolagem")
+            if "notes" in updates:
+                fields.append("notas")
+            if cat_changed:
+                fields.append("categorias")
+
+            dlg.destroy()
+            self.refresh()
+            self.app.set_status(f"{count} conta(s) atualizadas ({', '.join(fields)})")
+
+        ttk.Button(dlg, text="Aplicar a Todas", style="Accent.TButton", command=save).pack(pady=12)
 
     # ==================================================================
     # Actions
