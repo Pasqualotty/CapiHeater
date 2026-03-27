@@ -36,9 +36,15 @@ class ScheduleTab(ttk.Frame):
 
         ttk.Label(header, text="Gerenciar Cronogramas", style="Heading.TLabel").pack(side=tk.LEFT)
 
-        # Schedule selector row
+        # Search + Schedule selector row
         sel_frame = ttk.Frame(self, style="Dark.TFrame")
         sel_frame.pack(fill=tk.X, padx=12, pady=(0, 6))
+
+        ttk.Label(sel_frame, text="Pesquisar:", style="Dark.TLabel").pack(side=tk.LEFT, padx=(0, 6))
+        self._search_var = tk.StringVar()
+        self._search_var.trace_add("write", lambda *_: self._filter_schedules())
+        search_entry = ttk.Entry(sel_frame, textvariable=self._search_var, style="Dark.TEntry", width=20)
+        search_entry.pack(side=tk.LEFT, padx=(0, 12))
 
         ttk.Label(sel_frame, text="Cronograma:", style="Dark.TLabel").pack(side=tk.LEFT, padx=(0, 8))
         self._combo = ttk.Combobox(sel_frame, state="readonly", style="Dark.TCombobox", width=30)
@@ -118,18 +124,39 @@ class ScheduleTab(ttk.Frame):
     # Data
     # ==================================================================
 
+    def refresh(self) -> None:
+        """Reload schedules (called when tab becomes visible)."""
+        self._load_schedules()
+
     def _load_schedules(self) -> None:
         """Populate the schedule dropdown from the database."""
         self._schedules = self.app.db.fetch_all(
             "SELECT id, name, description, schedule_json FROM schedules ORDER BY id"
         )
+        self._filter_schedules()
 
-        names = [s["name"] for s in self._schedules]
+    def _filter_schedules(self) -> None:
+        """Filter the schedule dropdown based on the search text."""
+        all_schedules = getattr(self, "_schedules", [])
+        query = self._search_var.get().strip().lower()
+
+        if query:
+            self._filtered_schedules = [
+                s for s in all_schedules if query in s["name"].lower()
+            ]
+        else:
+            self._filtered_schedules = list(all_schedules)
+
+        names = [s["name"] for s in self._filtered_schedules]
         self._combo["values"] = names
 
         if names:
             self._combo.current(0)
             self._display_schedule(0)
+        else:
+            self._combo.set("")
+            self._tree.delete(*self._tree.get_children())
+            self._info_var.set("")
 
     def _on_schedule_selected(self, _event=None) -> None:
         idx = self._combo.current()
@@ -140,7 +167,8 @@ class ScheduleTab(ttk.Frame):
         """Show the day-by-day breakdown for the selected schedule."""
         self._tree.delete(*self._tree.get_children())
 
-        schedule = self._schedules[idx]
+        filtered = getattr(self, "_filtered_schedules", self._schedules)
+        schedule = filtered[idx]
         self._info_var.set(schedule.get("description", ""))
 
         days = self._parse_days(schedule)
@@ -178,9 +206,18 @@ class ScheduleTab(ttk.Frame):
 
     def _current_schedule(self) -> dict | None:
         idx = self._combo.current()
-        if idx < 0 or idx >= len(self._schedules):
+        filtered = getattr(self, "_filtered_schedules", self._schedules)
+        if idx < 0 or idx >= len(filtered):
             return None
-        return self._schedules[idx]
+        return filtered[idx]
+
+    def _select_by_name(self, name: str) -> None:
+        """Re-select a schedule by name in the (possibly filtered) combo."""
+        for i, s in enumerate(self._filtered_schedules):
+            if s["name"] == name:
+                self._combo.current(i)
+                self._display_schedule(i)
+                return
 
     def _save_schedule_days(self, schedule: dict, days: list[dict]) -> None:
         """Persist updated days to the database and refresh."""
@@ -188,15 +225,8 @@ class ScheduleTab(ttk.Frame):
             "UPDATE schedules SET schedule_json = ? WHERE id = ?",
             (json.dumps(days), schedule["id"]),
         )
-        # Refresh
-        cur_name = schedule["name"]
         self._load_schedules()
-        # Re-select
-        for i, s in enumerate(self._schedules):
-            if s["name"] == cur_name:
-                self._combo.current(i)
-                self._display_schedule(i)
-                break
+        self._select_by_name(schedule["name"])
 
     # ==================================================================
     # Actions
@@ -330,13 +360,9 @@ class ScheduleTab(ttk.Frame):
             (name.strip(), desc.strip(), json.dumps(initial)),
         )
 
+        self._search_var.set("")
         self._load_schedules()
-        # Select the new one
-        for i, s in enumerate(self._schedules):
-            if s["name"] == name.strip():
-                self._combo.current(i)
-                self._display_schedule(i)
-                break
+        self._select_by_name(name.strip())
 
         messagebox.showinfo("Sucesso", f"Cronograma '{name.strip()}' criado!", parent=self)
 
@@ -360,12 +386,9 @@ class ScheduleTab(ttk.Frame):
             (name.strip(), schedule.get("description", ""), schedule.get("schedule_json", "[]")),
         )
 
+        self._search_var.set("")
         self._load_schedules()
-        for i, s in enumerate(self._schedules):
-            if s["name"] == name.strip():
-                self._combo.current(i)
-                self._display_schedule(i)
-                break
+        self._select_by_name(name.strip())
 
         messagebox.showinfo("Sucesso", f"Cronograma duplicado como '{name.strip()}'!", parent=self)
 

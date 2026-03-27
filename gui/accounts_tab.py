@@ -49,6 +49,17 @@ class AccountsTab(ttk.Frame):
         ttk.Button(btn_frame, text="Reiniciar Cronograma", style="Danger.TButton", command=self._reset_schedule).pack(side=tk.LEFT, padx=(0, 6))
         ttk.Button(btn_frame, text="Categorias", style="Accent.TButton", command=self._manage_categories).pack(side=tk.LEFT)
 
+        # ---------- Search bar ----------
+        search_frame = ttk.Frame(self, style="Dark.TFrame")
+        search_frame.pack(fill=tk.X, padx=12, pady=(0, 4))
+
+        ttk.Label(search_frame, text="Pesquisar:", style="Dark.TLabel").pack(side=tk.LEFT, padx=(0, 6))
+        self._search_var = tk.StringVar()
+        self._search_var.trace_add("write", lambda *_: self._filter_tree())
+        search_entry = ttk.Entry(search_frame, textvariable=self._search_var, style="Dark.TEntry", width=30)
+        search_entry.pack(side=tk.LEFT)
+        ttk.Button(search_frame, text="Limpar", command=lambda: self._search_var.set("")).pack(side=tk.LEFT, padx=(6, 0))
+
         # ---------- Treeview ----------
         tree_frame = ttk.Frame(self, style="Dark.TFrame")
         tree_frame.pack(fill=tk.BOTH, expand=True, padx=12, pady=(6, 12))
@@ -92,23 +103,20 @@ class AccountsTab(ttk.Frame):
 
     def refresh(self) -> None:
         """Reload accounts from the database into the treeview."""
-        self._tree.delete(*self._tree.get_children())
-        self._row_map.clear()
-
         accounts = self.app.account_manager.get_all_accounts()
         schedules = self._get_schedule_names()
         cat_mgr = self.app.category_manager
 
+        self._all_accounts = []
         for acc in accounts:
             sched_name = schedules.get(acc.get("schedule_id", 1), "Padrao")
             status_label = self._status_label(acc.get("status", "idle"))
             proxy = acc.get("proxy") or "—"
             cat_names = cat_mgr.get_account_category_names(acc["id"])
             cat_label = ", ".join(cat_names) if cat_names else "—"
-            iid = self._tree.insert(
-                "",
-                tk.END,
-                values=(
+            self._all_accounts.append({
+                "id": acc["id"],
+                "values": (
                     f"@{acc.get('username', '???')}",
                     status_label,
                     sched_name,
@@ -117,8 +125,23 @@ class AccountsTab(ttk.Frame):
                     proxy,
                     acc.get("start_date", ""),
                 ),
-            )
-            self._row_map[iid] = acc["id"]
+            })
+
+        self._filter_tree()
+
+    def _filter_tree(self) -> None:
+        """Apply the search filter and repopulate the treeview."""
+        self._tree.delete(*self._tree.get_children())
+        self._row_map.clear()
+
+        query = self._search_var.get().strip().lower()
+
+        for item in getattr(self, "_all_accounts", []):
+            username = item["values"][0].lower()
+            if query and query not in username:
+                continue
+            iid = self._tree.insert("", tk.END, values=item["values"])
+            self._row_map[iid] = item["id"]
 
     def _get_schedule_names(self) -> dict[int, str]:
         rows = self.app.db.fetch_all("SELECT id, name FROM schedules ORDER BY id")

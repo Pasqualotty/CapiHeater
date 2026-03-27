@@ -51,6 +51,17 @@ class TargetsTab(ttk.Frame):
         ttk.Button(btn_frame, text="Abrir Perfil", style="Accent.TButton", command=self._open_profile).pack(side=tk.LEFT, padx=(0, 6))
         ttk.Button(btn_frame, text="Categorias", style="Accent.TButton", command=self._manage_categories).pack(side=tk.LEFT)
 
+        # ---------- Search bar ----------
+        search_frame = ttk.Frame(self, style="Dark.TFrame")
+        search_frame.pack(fill=tk.X, padx=12, pady=(0, 4))
+
+        ttk.Label(search_frame, text="Pesquisar:", style="Dark.TLabel").pack(side=tk.LEFT, padx=(0, 6))
+        self._search_var = tk.StringVar()
+        self._search_var.trace_add("write", lambda *_: self._filter_tree())
+        search_entry = ttk.Entry(search_frame, textvariable=self._search_var, style="Dark.TEntry", width=30)
+        search_entry.pack(side=tk.LEFT)
+        ttk.Button(search_frame, text="Limpar", command=lambda: self._search_var.set("")).pack(side=tk.LEFT, padx=(6, 0))
+
         # Treeview — extended selection for multi-select
         tree_frame = ttk.Frame(self, style="Dark.TFrame")
         tree_frame.pack(fill=tk.BOTH, expand=True, padx=12, pady=(6, 12))
@@ -105,32 +116,52 @@ class TargetsTab(ttk.Frame):
     # ==================================================================
 
     def refresh(self) -> None:
-        self._tree.delete(*self._tree.get_children())
-        self._row_map.clear()
-        self._url_map.clear()
-
         targets = self.app.target_manager.get_targets(active_only=False)
         cat_mgr = self.app.category_manager
+
+        self._all_targets = []
         for t in targets:
             priority_label = PRIORITY_LABELS.get(t.get("priority", 1), "Baixa")
             active_label = "Sim" if t.get("active", 1) else "Nao"
             cat_names = cat_mgr.get_target_category_names(t["id"])
             cat_label = ", ".join(cat_names) if cat_names else "—"
-            iid = self._tree.insert(
-                "",
-                tk.END,
-                values=(
+            self._all_targets.append({
+                "id": t["id"],
+                "url": t.get("url", ""),
+                "values": (
                     f"@{t.get('username', '???')}",
                     t.get("url", ""),
                     priority_label,
                     cat_label,
                     active_label,
                 ),
-            )
-            self._row_map[iid] = t["id"]
-            self._url_map[iid] = t.get("url", "")
+            })
 
-        self._sel_info.set(f"{len(targets)} alvos | Ctrl+A = selecionar todos | Duplo clique = abrir perfil")
+        self._filter_tree()
+
+    def _filter_tree(self) -> None:
+        """Apply the search filter and repopulate the treeview."""
+        self._tree.delete(*self._tree.get_children())
+        self._row_map.clear()
+        self._url_map.clear()
+
+        query = self._search_var.get().strip().lower()
+        shown = 0
+
+        for item in getattr(self, "_all_targets", []):
+            username = item["values"][0].lower()
+            if query and query not in username:
+                continue
+            iid = self._tree.insert("", tk.END, values=item["values"])
+            self._row_map[iid] = item["id"]
+            self._url_map[iid] = item["url"]
+            shown += 1
+
+        total = len(getattr(self, "_all_targets", []))
+        if query:
+            self._sel_info.set(f"{shown}/{total} alvos encontrados")
+        else:
+            self._sel_info.set(f"{total} alvos | Ctrl+A = selecionar todos | Duplo clique = abrir perfil")
 
     def _get_selected_ids(self) -> list[int]:
         """Return list of selected target IDs."""
