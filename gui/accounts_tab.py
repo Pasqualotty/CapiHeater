@@ -33,21 +33,21 @@ class AccountsTab(ttk.Frame):
     # ==================================================================
 
     def _build_ui(self) -> None:
-        # ---------- Toolbar ----------
+        # ---------- Toolbar row 1 ----------
         toolbar = ttk.Frame(self, style="Dark.TFrame")
-        toolbar.pack(fill=tk.X, padx=12, pady=(12, 6))
+        toolbar.pack(fill=tk.X, padx=12, pady=(12, 2))
 
         ttk.Label(toolbar, text="Gerenciamento de Contas", style="Heading.TLabel").pack(side=tk.LEFT)
 
         btn_frame = ttk.Frame(toolbar, style="Dark.TFrame")
         btn_frame.pack(side=tk.RIGHT)
 
-        ttk.Button(btn_frame, text="Adicionar Conta", style="Accent.TButton", command=self._add_account_dialog).pack(side=tk.LEFT, padx=(0, 6))
+        ttk.Button(btn_frame, text="Adicionar", style="Accent.TButton", command=self._add_account_dialog).pack(side=tk.LEFT, padx=(0, 6))
         ttk.Button(btn_frame, text="Editar", style="Accent.TButton", command=self._edit_account_dialog).pack(side=tk.LEFT, padx=(0, 6))
         ttk.Button(btn_frame, text="Excluir", style="Danger.TButton", command=self._delete_account).pack(side=tk.LEFT, padx=(0, 6))
-        ttk.Button(btn_frame, text="Importar Cookies", style="Accent.TButton", command=self._import_cookies).pack(side=tk.LEFT, padx=(0, 6))
-        ttk.Button(btn_frame, text="Importar em Massa", style="Accent.TButton", command=self._bulk_import).pack(side=tk.LEFT, padx=(0, 6))
-        ttk.Button(btn_frame, text="Reiniciar Cronograma", style="Danger.TButton", command=self._reset_schedule).pack(side=tk.LEFT, padx=(0, 6))
+        ttk.Button(btn_frame, text="Cookies", style="Accent.TButton", command=self._import_cookies).pack(side=tk.LEFT, padx=(0, 6))
+        ttk.Button(btn_frame, text="Importar Massa", style="Accent.TButton", command=self._bulk_import).pack(side=tk.LEFT, padx=(0, 6))
+        ttk.Button(btn_frame, text="Reiniciar", style="Danger.TButton", command=self._reset_schedule).pack(side=tk.LEFT, padx=(0, 6))
         ttk.Button(btn_frame, text="Categorias", style="Accent.TButton", command=self._manage_categories).pack(side=tk.LEFT)
 
         # ---------- Search bar ----------
