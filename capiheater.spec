@@ -16,19 +16,6 @@ import sys
 
 block_cipher = None
 
-# Locate python311.dll explicitly (GitHub Actions runners may install
-# Python in non-standard paths that PyInstaller doesn't search)
-_PYTHON_DLL_CANDIDATES = [
-    os.path.join(os.path.dirname(sys.executable), "python311.dll"),
-    os.path.join(sys.exec_prefix, "python311.dll"),
-    os.path.join(sys.base_prefix, "python311.dll"),
-]
-_EXTRA_BINARIES = []
-for _p in _PYTHON_DLL_CANDIDATES:
-    if os.path.isfile(_p):
-        _EXTRA_BINARIES.append((_p, "."))
-        break
-
 # Resolve paths relative to this spec file
 # SPECPATH is the full path to THIS .spec file
 _SPEC_DIR = os.path.dirname(SPECPATH) if os.path.isfile(SPECPATH) else SPECPATH
@@ -41,7 +28,7 @@ if not os.path.isfile(_ICON):
 a = Analysis(
     [os.path.join(_SPEC_DIR, "main.py")],
     pathex=[_SPEC_DIR],
-    binaries=_EXTRA_BINARIES,
+    binaries=[],
     datas=[
         # Bundle the default schedule JSON so db.py can find it
         (os.path.join(_SPEC_DIR, "schedules", "default_schedule.json"), "schedules"),
@@ -142,7 +129,7 @@ exe = EXE(
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=False,
+    upx=True,
     upx_exclude=[],
     runtime_tmpdir=None,
     console=False,          # --windowed: no terminal window
