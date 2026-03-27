@@ -215,7 +215,7 @@ class TargetsTab(ttk.Frame):
 
         dlg = tk.Toplevel(self)
         dlg.title("Adicionar Alvos em Massa")
-        dlg.geometry("500x450")
+        dlg.geometry("500x520")
         dlg.configure(bg="#1a1a2e")
         dlg.resizable(False, True)
         dlg.transient(self.winfo_toplevel())
@@ -259,14 +259,25 @@ class TargetsTab(ttk.Frame):
         prio_combo.pack(side=tk.LEFT, padx=(8, 16))
         prio_combo.set("Alta")
 
-        tk.Label(opts_frame, text="Categoria:", font=("Segoe UI", 10), bg=bg, fg=fg).pack(side=tk.LEFT)
+        # Categories (multi-select listbox)
+        cat_frame = tk.Frame(dlg, bg=bg)
+        cat_frame.pack(fill=tk.X, padx=20, pady=(4, 4))
+
+        tk.Label(cat_frame, text="Categorias (Ctrl+clique para multiplas):",
+                 font=("Segoe UI", 9), bg=bg, fg="#9e9e9e").pack(anchor="w")
+
         cat_names_map = self.app.category_manager.get_category_names()
-        cat_display = ["— Nenhuma —"] + list(cat_names_map.values())
-        cat_id_list = [None] + list(cat_names_map.keys())
-        cat_combo = ttk.Combobox(opts_frame, values=cat_display,
-                                  state="readonly", style="Dark.TCombobox", width=14)
-        cat_combo.pack(side=tk.LEFT, padx=(8, 0))
-        cat_combo.current(0)
+        cat_list = list(cat_names_map.values())
+        cat_ids = list(cat_names_map.keys())
+
+        bulk_cat_listbox = tk.Listbox(
+            cat_frame, selectmode=tk.MULTIPLE, height=4, width=40,
+            bg="#0d1b2a", fg="#e0e0e0", selectbackground="#1a73e8",
+            relief="flat", highlightthickness=0, font=("Segoe UI", 9),
+        )
+        bulk_cat_listbox.pack(fill=tk.X)
+        for name in cat_list:
+            bulk_cat_listbox.insert(tk.END, name)
 
         # Buttons
         btn_frame = tk.Frame(dlg, bg=bg)
@@ -279,8 +290,7 @@ class TargetsTab(ttk.Frame):
                 return
 
             priority = PRIORITY_VALUES.get(prio_combo.get(), 3)
-            cat_idx = cat_combo.current()
-            selected_cat_id = cat_id_list[cat_idx] if cat_idx >= 0 else None
+            selected_cat_ids = [cat_ids[i] for i in bulk_cat_listbox.curselection()]
             lines = [line.strip() for line in raw.splitlines() if line.strip()]
 
             added = 0
@@ -294,8 +304,8 @@ class TargetsTab(ttk.Frame):
                 url = f"https://x.com/{username}"
                 try:
                     new_id = self.app.target_manager.add_target(username=username, url=url, priority=priority)
-                    if selected_cat_id is not None:
-                        self.app.category_manager.set_target_categories(new_id, [selected_cat_id])
+                    if selected_cat_ids:
+                        self.app.category_manager.set_target_categories(new_id, selected_cat_ids)
                     added += 1
                 except Exception:
                     skipped += 1  # Probably duplicate
