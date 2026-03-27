@@ -127,26 +127,38 @@ _system32 = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32"
 _critical_dlls = [
     "vcruntime140.dll",
     "vcruntime140_1.dll",
+    "ucrtbase.dll",
 ]
 # Find ALL python3*.dll in the Python directory
 for _f in glob.glob(os.path.join(_python_dir, "python3*.dll")):
     _critical_dlls.append(os.path.basename(_f))
+# Find ALL api-ms-win-crt-* DLLs (Universal C Runtime) — python3XX.dll
+# depends on these and they may not resolve correctly on all machines
+for _f in glob.glob(os.path.join(_python_dir, "api-ms-win-crt-*.dll")):
+    _critical_dlls.append(os.path.basename(_f))
+# Also check the DLLs subdirectory (some Python installs put them there)
+for _f in glob.glob(os.path.join(_python_dir, "DLLs", "api-ms-win-crt-*.dll")):
+    _critical_dlls.append(os.path.basename(_f))
 
-print(f"  Critical DLLs to bundle: {_critical_dlls}")
+# Deduplicate
+_critical_dlls = list(dict.fromkeys(_critical_dlls))
+print(f"  Critical DLLs to bundle ({len(_critical_dlls)}): {_critical_dlls}")
 
 for _dll_name in _critical_dlls:
-    # REMOVE any existing entry for this DLL (Analysis may have a bad ref)
+    # REMOVE any existing entry (Analysis may have excluded it or have a bad ref)
     a.binaries = [b for b in a.binaries if b[0].lower() != _dll_name.lower()]
 
     # Find the actual DLL file and add it
-    for _search_dir in [_python_dir, _SPEC_DIR, _system32]:
+    _found = False
+    for _search_dir in [_python_dir, os.path.join(_python_dir, "DLLs"), _SPEC_DIR, _system32]:
         _dll_path = os.path.join(_search_dir, _dll_name)
         if os.path.isfile(_dll_path):
             a.binaries.append((_dll_name, _dll_path, "BINARY"))
             _size = os.path.getsize(_dll_path)
             print(f"  -> Force-bundled {_dll_name} ({_size} bytes) from {_dll_path}")
+            _found = True
             break
-    else:
+    if not _found:
         print(f"  !! WARNING: Could not find {_dll_name} anywhere!")
 
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
@@ -164,9 +176,7 @@ exe = EXE(
     strip=False,
     upx=False,
     upx_exclude=[],
-    # Extract to _runtime/ next to the exe instead of %TEMP%\_MEI*.
-    # Avoids antivirus interference and 8.3 short-path issues.
-    runtime_tmpdir="_runtime",
+    runtime_tmpdir=None,
     console=False,          # --windowed: no terminal window
     disable_windowed_traceback=False,
     argv_emulation=False,
