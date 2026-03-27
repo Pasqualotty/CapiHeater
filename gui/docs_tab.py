@@ -498,7 +498,7 @@ class DocsTab(ttk.Frame):
 
         for i, doc in enumerate(DOCS):
             mark = f"section_{i}"
-            self._text.mark_set(mark, tk.END)
+            self._text.mark_set(mark, "end-1c")
             self._text.mark_gravity(mark, "left")
             self._section_marks.append(mark)
 
