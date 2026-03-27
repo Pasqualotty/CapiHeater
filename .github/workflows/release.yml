@@ -27,6 +27,32 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      - name: Copy VC runtime DLLs into project (force-bundle)
+        shell: pwsh
+        run: |
+          # PyInstaller skips vcruntime DLLs because it considers them
+          # "system" DLLs. We copy them next to the spec so the spec
+          # can include them as explicit binaries.
+          $pythonDir = Split-Path (Get-Command python).Source
+          $dlls = @("vcruntime140.dll", "vcruntime140_1.dll")
+          foreach ($dll in $dlls) {
+            $src = Join-Path $pythonDir $dll
+            if (Test-Path $src) {
+              Copy-Item $src -Destination . -Force
+              Write-Host "Copied $dll from $src"
+            } else {
+              # Fallback: search System32
+              $sys = Join-Path $env:SystemRoot "System32\$dll"
+              if (Test-Path $sys) {
+                Copy-Item $sys -Destination . -Force
+                Write-Host "Copied $dll from $sys"
+              } else {
+                Write-Host "WARNING: $dll not found anywhere"
+              }
+            }
+          }
+          Get-ChildItem *.dll | ForEach-Object { Write-Host "  -> $($_.Name) ($([math]::Round($_.Length/1KB, 1)) KB)" }
+
       - name: Build .exe with PyInstaller
         run: pyinstaller capiheater.spec
 

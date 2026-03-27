@@ -20,6 +20,22 @@ block_cipher = None
 # SPECPATH is the full path to THIS .spec file
 _SPEC_DIR = os.path.dirname(SPECPATH) if os.path.isfile(SPECPATH) else SPECPATH
 
+# Force-bundle VC runtime DLLs that PyInstaller skips (it treats them
+# as "system" DLLs).  The CI workflow copies them into _SPEC_DIR before
+# building; we also search the Python install dir and System32 as
+# fallbacks so local builds work too.
+_VC_DLLS = ["vcruntime140.dll", "vcruntime140_1.dll"]
+_VC_BINARIES = []
+for _dll in _VC_DLLS:
+    for _search in [
+        os.path.join(_SPEC_DIR, _dll),                        # copied by CI
+        os.path.join(os.path.dirname(sys.executable), _dll),  # Python dir
+        os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32", _dll),
+    ]:
+        if os.path.isfile(_search):
+            _VC_BINARIES.append((_search, "."))
+            break
+
 # Icon path (use None if icon doesn't exist yet)
 _ICON = os.path.join(_SPEC_DIR, "assets", "icon.ico")
 if not os.path.isfile(_ICON):
@@ -28,7 +44,7 @@ if not os.path.isfile(_ICON):
 a = Analysis(
     [os.path.join(_SPEC_DIR, "main.py")],
     pathex=[_SPEC_DIR],
-    binaries=[],
+    binaries=_VC_BINARIES,
     datas=[
         # Bundle the default schedule JSON so db.py can find it
         (os.path.join(_SPEC_DIR, "schedules", "default_schedule.json"), "schedules"),
