@@ -30,11 +30,15 @@ jobs:
       - name: Build .exe with PyInstaller
         run: pyinstaller capiheater.spec
 
-      - name: Verify .exe exists
+      - name: Verify .exe exists and is valid
         run: |
           if (!(Test-Path "dist\CapiHeater.exe")) { throw "Build failed - .exe not found" }
           $size = (Get-Item "dist\CapiHeater.exe").Length / 1MB
           Write-Host "CapiHeater.exe size: $([math]::Round($size, 2)) MB"
+          if ($size -lt 5) { throw "Build suspicious - exe too small ($([math]::Round($size, 2)) MB)" }
+
+      - name: Verify critical DLLs are bundled
+        run: python ci/verify_exe.py dist/CapiHeater.exe
 
       - name: Upload .exe as Release Asset
         uses: softprops/action-gh-release@v2

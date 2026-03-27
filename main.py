@@ -25,7 +25,11 @@ from utils.logger import get_logger
 
 
 def _cleanup_update_leftovers():
-    """Delete tmp*.exe and .old files left behind by the auto-updater."""
+    """Delete temp files left behind by the auto-updater.
+
+    Only deletes .download and .old files.  The .old backup is kept
+    if we can't verify the current exe is working (it's our rollback).
+    """
     import glob as _glob
 
     current_exe = (
@@ -34,17 +38,29 @@ def _cleanup_update_leftovers():
         else None
     )
 
-    for pattern in (
-        os.path.join(_BASE_DIR, "tmp*.exe"),
-        os.path.join(_BASE_DIR, "CapiHeater.exe.old"),
-    ):
-        for path in _glob.glob(pattern):
-            if current_exe and os.path.normcase(os.path.abspath(path)) == current_exe:
-                continue
-            try:
-                os.remove(path)
-            except OSError:
-                pass
+    # Always clean .download temp files
+    for path in _glob.glob(os.path.join(_BASE_DIR, "*.download")):
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+
+    # Clean tmp*.exe files (but never ourselves)
+    for path in _glob.glob(os.path.join(_BASE_DIR, "tmp*.exe")):
+        if current_exe and os.path.normcase(os.path.abspath(path)) == current_exe:
+            continue
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+
+    # Only delete .old backup after confirming we're running fine.
+    # If we got this far, Python loaded successfully — safe to delete.
+    for path in _glob.glob(os.path.join(_BASE_DIR, "CapiHeater.exe.old")):
+        try:
+            os.remove(path)
+        except OSError:
+            pass
 
 
 def _migrate_old_data():

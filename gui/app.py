@@ -314,9 +314,9 @@ class CapiHeaterApp:
         if not messagebox.askyesno("Atualização", msg):
             return
 
-        self._start_update_download(info["download_url"])
+        self._start_update_download(info["download_url"], info.get("size", 0))
 
-    def _start_update_download(self, download_url: str) -> None:
+    def _start_update_download(self, download_url: str, expected_size: int = 0) -> None:
         # Build a small progress window
         win = tk.Toplevel(self.root)
         win.title("Atualizando...")
@@ -351,7 +351,11 @@ class CapiHeaterApp:
 
             updater = AutoUpdater()
             try:
-                updater.download_and_apply(download_url, on_progress=on_progress)
+                updater.download_and_apply(
+                    download_url,
+                    on_progress=on_progress,
+                    expected_size=expected_size,
+                )
             except Exception as exc:
                 self.root.after(
                     0,
