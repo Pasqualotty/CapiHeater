@@ -70,7 +70,7 @@ class AccountsTab(ttk.Frame):
             columns=columns,
             show="headings",
             style="Dark.Treeview",
-            selectmode="browse",
+            selectmode="extended",
         )
 
         self._tree.heading("username", text="Usuario")
@@ -96,6 +96,48 @@ class AccountsTab(ttk.Frame):
 
         # Store mapping iid -> account_id
         self._row_map: dict[str, int] = {}
+
+        # Bindings
+        self._tree.bind("<Control-a>", self._select_all)
+        self._tree.bind("<Button-3>", self._show_context_menu)
+        self._tree.bind("<<TreeviewSelect>>", self._on_selection_changed)
+
+        # Selection info
+        sel_frame = ttk.Frame(self, style="Dark.TFrame")
+        sel_frame.pack(fill=tk.X, padx=12, pady=(0, 6))
+        self._sel_info = tk.StringVar(value="")
+        ttk.Label(sel_frame, textvariable=self._sel_info, style="Dark.TLabel").pack(side=tk.LEFT)
+
+    # ==================================================================
+    # Selection helpers
+    # ==================================================================
+
+    def _select_all(self, _event=None):
+        self._tree.selection_set(self._tree.get_children())
+
+    def _on_selection_changed(self, _event=None):
+        count = len(self._tree.selection())
+        if count == 0:
+            self._sel_info.set("")
+        elif count == 1:
+            self._sel_info.set("1 conta selecionada")
+        else:
+            self._sel_info.set(f"{count} contas selecionadas")
+
+    def _show_context_menu(self, event):
+        iid = self._tree.identify_row(event.y)
+        if iid and iid not in self._tree.selection():
+            self._tree.selection_set(iid)
+
+        menu = tk.Menu(self, tearoff=0, bg="#16213e", fg="#e0e0e0", activebackground="#0f3460")
+        menu.add_command(label="Editar", command=self._edit_account_dialog)
+        menu.add_command(label="Importar Cookies", command=self._import_cookies)
+        menu.add_separator()
+        menu.add_command(label="Reiniciar Cronograma", command=self._reset_schedule)
+        menu.add_command(label="Excluir", command=self._delete_account)
+        menu.add_separator()
+        menu.add_command(label="Selecionar Todos", command=self._select_all)
+        menu.tk_popup(event.x_root, event.y_root)
 
     # ==================================================================
     # Data
@@ -147,11 +189,15 @@ class AccountsTab(ttk.Frame):
         rows = self.app.db.fetch_all("SELECT id, name FROM schedules ORDER BY id")
         return {r["id"]: r["name"] for r in rows}
 
-    def _get_selected_id(self) -> int | None:
+    def _get_selected_ids(self) -> list[int]:
+        """Return list of selected account IDs."""
         sel = self._tree.selection()
-        if not sel:
-            return None
-        return self._row_map.get(sel[0])
+        return [self._row_map[iid] for iid in sel if iid in self._row_map]
+
+    def _get_selected_id(self) -> int | None:
+        """Return a single selected ID (for single-item actions like edit)."""
+        ids = self._get_selected_ids()
+        return ids[0] if ids else None
 
     # ==================================================================
     # Dialogs
@@ -368,41 +414,46 @@ class AccountsTab(ttk.Frame):
     # ==================================================================
 
     def _reset_schedule(self) -> None:
-        """Reset the selected account's schedule to day 1 (today)."""
-        aid = self._get_selected_id()
-        if aid is None:
-            messagebox.showwarning("Aviso", "Selecione uma conta para reiniciar o cronograma.", parent=self)
+        """Reset selected accounts' schedules to day 1 (today)."""
+        ids = self._get_selected_ids()
+        if not ids:
+            messagebox.showwarning("Aviso", "Selecione uma ou mais contas.", parent=self)
             return
-        if not messagebox.askyesno(
-            "Reiniciar Cronograma",
+        count = len(ids)
+        msg = (
+            f"Reiniciar cronograma de {count} conta(s)?\n\n"
             "Isso vai:\n"
             "- Definir a data de inicio como hoje\n"
             "- Resetar o dia atual para 1\n"
-            "- Limpar o historico de acoes da conta\n\n"
-            "Tem certeza?",
-            parent=self,
-        ):
+            "- Limpar o historico de acoes\n\n"
+            "Tem certeza?"
+        )
+        if not messagebox.askyesno("Reiniciar Cronograma", msg, parent=self):
             return
-        self.app.account_manager.reset_schedule(aid)
-        self.app.set_status("Cronograma reiniciado")
+        for aid in ids:
+            self.app.account_manager.reset_schedule(aid)
+        self.app.set_status(f"Cronograma reiniciado para {count} conta(s)")
         self.refresh()
 
     def _delete_account(self) -> None:
-        aid = self._get_selected_id()
-        if aid is None:
-            messagebox.showwarning("Aviso", "Selecione uma conta para excluir.", parent=self)
+        ids = self._get_selected_ids()
+        if not ids:
+            messagebox.showwarning("Aviso", "Selecione uma ou mais contas para excluir.", parent=self)
             return
-        if not messagebox.askyesno("Confirmar", "Tem certeza que deseja excluir esta conta?", parent=self):
+        count = len(ids)
+        msg = f"Excluir {count} conta(s) selecionada(s)?" if count > 1 else "Excluir esta conta?"
+        if not messagebox.askyesno("Confirmar", msg, parent=self):
             return
-        self.app.account_manager.delete_account(aid)
-        self.app.set_status("Conta excluida")
+        for aid in ids:
+            self.app.account_manager.delete_account(aid)
+        self.app.set_status(f"{count} conta(s) excluida(s)")
         self.refresh()
 
     def _import_cookies(self) -> None:
-        """Import cookies from a file and assign to selected account."""
-        aid = self._get_selected_id()
-        if aid is None:
-            messagebox.showwarning("Aviso", "Selecione uma conta para importar cookies.", parent=self)
+        """Import cookies from a file and assign to selected accounts."""
+        ids = self._get_selected_ids()
+        if not ids:
+            messagebox.showwarning("Aviso", "Selecione uma ou mais contas para importar cookies.", parent=self)
             return
 
         path = filedialog.askopenfilename(
@@ -418,8 +469,9 @@ class AccountsTab(ttk.Frame):
             messagebox.showerror("Erro", "Falha ao carregar cookies do arquivo.", parent=self)
             return
 
-        self.app.account_manager.update_account(aid, cookies_json=cookies)
-        self.app.set_status("Cookies importados com sucesso")
+        for aid in ids:
+            self.app.account_manager.update_account(aid, cookies_json=cookies)
+        self.app.set_status(f"Cookies importados para {len(ids)} conta(s)")
         self.refresh()
 
     # ==================================================================
