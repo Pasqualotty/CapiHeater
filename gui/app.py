@@ -389,6 +389,12 @@ class CapiHeaterApp:
 
     def _configure_styles(self) -> None:
         style = ttk.Style(self.root)
+
+        # Combobox dropdown list colors (Tk option database)
+        self.root.option_add("*TCombobox*Listbox.background", BG_INPUT)
+        self.root.option_add("*TCombobox*Listbox.foreground", FG_TEXT)
+        self.root.option_add("*TCombobox*Listbox.selectBackground", ACCENT_HIGHLIGHT)
+        self.root.option_add("*TCombobox*Listbox.selectForeground", FG_TEXT)
         style.theme_use("clam")
 
         # ----- General -----
@@ -491,6 +497,14 @@ class CapiHeaterApp:
             fieldbackground=BG_INPUT,
             foreground=FG_TEXT,
             selectbackground=ACCENT_HIGHLIGHT,
+            selectforeground=FG_TEXT,
+        )
+        style.map(
+            "Dark.TCombobox",
+            fieldbackground=[("readonly", BG_INPUT), ("disabled", BG_SECONDARY)],
+            foreground=[("readonly", FG_TEXT), ("disabled", FG_MUTED)],
+            selectbackground=[("readonly", BG_INPUT)],
+            selectforeground=[("readonly", FG_TEXT)],
         )
 
         # ----- Progressbar -----
