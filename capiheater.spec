@@ -117,17 +117,27 @@ a = Analysis(
     noarchive=False,
 )
 
-# ── Force-bundle VC runtime DLLs ──────────────────────────────────────
-# PyInstaller's Analysis step filters out vcruntime140.dll and
-# vcruntime140_1.dll as "system" DLLs.  We add them back AFTER
-# Analysis so they cannot be removed.  Without these, the onefile
-# exe fails with "Failed to load Python DLL" on machines that don't
-# have the VC++ Redistributable installed (or in the DLL search path
-# of the _MEI temp extraction dir).
+# ── Force-bundle critical DLLs ────────────────────────────────────────
+# PyInstaller's Analysis step sometimes filters out DLLs it considers
+# "system" libraries.  We force-add them AFTER Analysis so they are
+# always present in the onefile extraction dir (_MEI*).
+# Without these, the exe fails with "Failed to load Python DLL" on
+# machines that don't have the VC++ Redistributable or the Python DLL
+# in the DLL search path.
 _python_dir = os.path.dirname(sys.executable)
 _system32 = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32")
-_vc_dlls = ["vcruntime140.dll", "vcruntime140_1.dll"]
-for _dll_name in _vc_dlls:
+_critical_dlls = [
+    "vcruntime140.dll",
+    "vcruntime140_1.dll",
+    "python312.dll",
+]
+# Also find any pythonXYZ.dll in the Python directory
+for _f in glob.glob(os.path.join(_python_dir, "python3*.dll")):
+    _name = os.path.basename(_f)
+    if _name not in _critical_dlls:
+        _critical_dlls.append(_name)
+
+for _dll_name in _critical_dlls:
     # Already included by Analysis? Skip.
     if any(_dll_name.lower() == name.lower() for name, _, _ in a.binaries):
         continue
@@ -153,8 +163,8 @@ exe = EXE(
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,
-    upx_exclude=["vcruntime140.dll", "vcruntime140_1.dll"],
+    upx=False,
+    upx_exclude=[],
     runtime_tmpdir=None,
     console=False,          # --windowed: no terminal window
     disable_windowed_traceback=False,
