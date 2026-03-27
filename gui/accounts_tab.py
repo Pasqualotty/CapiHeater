@@ -57,9 +57,19 @@ class AccountsTab(ttk.Frame):
         ttk.Label(search_frame, text="Pesquisar:", style="Dark.TLabel").pack(side=tk.LEFT, padx=(0, 6))
         self._search_var = tk.StringVar()
         self._search_var.trace_add("write", lambda *_: self._filter_tree())
-        search_entry = ttk.Entry(search_frame, textvariable=self._search_var, style="Dark.TEntry", width=30)
+        search_entry = ttk.Entry(search_frame, textvariable=self._search_var, style="Dark.TEntry", width=20)
         search_entry.pack(side=tk.LEFT)
-        ttk.Button(search_frame, text="Limpar", command=lambda: self._search_var.set("")).pack(side=tk.LEFT, padx=(6, 0))
+
+        ttk.Label(search_frame, text="Categoria:", style="Dark.TLabel").pack(side=tk.LEFT, padx=(12, 6))
+        self._cat_filter_var = tk.StringVar(value="Todas")
+        self._cat_filter_combo = ttk.Combobox(
+            search_frame, textvariable=self._cat_filter_var,
+            state="readonly", style="Dark.TCombobox", width=14,
+        )
+        self._cat_filter_combo.pack(side=tk.LEFT)
+        self._cat_filter_combo.bind("<<ComboboxSelected>>", lambda *_: self._filter_tree())
+
+        ttk.Button(search_frame, text="Limpar", command=self._clear_filters).pack(side=tk.LEFT, padx=(6, 0))
 
         # ---------- Treeview ----------
         tree_frame = ttk.Frame(self, style="Dark.TFrame")
@@ -164,6 +174,7 @@ class AccountsTab(ttk.Frame):
             self._all_accounts.append({
                 "id": acc["id"],
                 "username": acc.get("username", "???"),
+                "cat_names": cat_names,
                 "values": (
                     f"@{acc.get('username', '???')}",
                     status_label,
@@ -175,19 +186,34 @@ class AccountsTab(ttk.Frame):
                 ),
             })
 
+        # Update category filter combo
+        all_cats = sorted({n for item in self._all_accounts for n in item["cat_names"]})
+        self._cat_filter_combo["values"] = ["Todas", "Sem categoria"] + all_cats
+        if self._cat_filter_var.get() not in self._cat_filter_combo["values"]:
+            self._cat_filter_var.set("Todas")
+
         self._filter_tree()
 
+    def _clear_filters(self):
+        self._search_var.set("")
+        self._cat_filter_var.set("Todas")
+
     def _filter_tree(self) -> None:
-        """Apply the search filter and repopulate the treeview."""
+        """Apply search and category filters and repopulate the treeview."""
         self._tree.delete(*self._tree.get_children())
         self._row_map.clear()
         self._username_map: dict[str, str] = {}
 
         query = self._search_var.get().strip().lower()
+        cat_filter = self._cat_filter_var.get()
 
         for item in getattr(self, "_all_accounts", []):
             display_name = item["values"][0].lower()
             if query and query not in display_name:
+                continue
+            if cat_filter == "Sem categoria" and item["cat_names"]:
+                continue
+            if cat_filter not in ("Todas", "Sem categoria") and cat_filter not in item["cat_names"]:
                 continue
             iid = self._tree.insert("", tk.END, values=item["values"])
             self._row_map[iid] = item["id"]
