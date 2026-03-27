@@ -55,6 +55,7 @@ class Database:
                     schedule_id INTEGER DEFAULT 1,
                     start_date TEXT NOT NULL,
                     current_day INTEGER DEFAULT 1,
+                    scroll_config TEXT DEFAULT NULL,
                     notes TEXT DEFAULT '',
                     created_at TEXT DEFAULT (datetime('now')),
                     updated_at TEXT DEFAULT (datetime('now')),
@@ -133,6 +134,12 @@ class Database:
                     FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE
                 )
             """)
+
+            # --- Migrations for existing databases ---
+            # Add scroll_config column if missing (v0.7.1+)
+            cols = {r[1] for r in cursor.execute("PRAGMA table_info(accounts)").fetchall()}
+            if "scroll_config" not in cols:
+                cursor.execute("ALTER TABLE accounts ADD COLUMN scroll_config TEXT DEFAULT NULL")
 
             # Insert default schedules if none exist
             cursor.execute("SELECT COUNT(*) FROM schedules")

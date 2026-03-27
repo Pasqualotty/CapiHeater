@@ -518,7 +518,7 @@ class DocsTab(ttk.Frame):
         idx = sel[0]
         if idx < len(self._section_marks):
             mark = self._section_marks[idx]
-            self._text.see(mark)
+            self._text.yview(mark)
 
     def refresh(self) -> None:
         """No-op refresh for tab-change compatibility."""

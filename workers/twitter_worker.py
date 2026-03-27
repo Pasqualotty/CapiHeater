@@ -346,6 +346,44 @@ class TwitterWorker(BaseWorker):
             self.driver.execute_script(f"window.scrollBy(0, {px});")
             time.sleep(random.uniform(1.5, 4.0))
 
+    def _scroll_profile(self):
+        """Scroll a target profile using the advanced scroll config.
+
+        Uses the same pixel ranges and pause timings as the feed scroll,
+        but with fewer iterations and no post opening or comment viewing.
+        """
+        from utils.config import DEFAULT_SCROLL_CONFIG
+
+        cfg = getattr(self, "_scroll_config", None) or DEFAULT_SCROLL_CONFIG
+        scroll_types = [
+            ("small", cfg.get("scroll_small_min", 200), cfg.get("scroll_small_max", 400),
+             cfg.get("pause_after_small_min", 1.5), cfg.get("pause_after_small_max", 3.0)),
+            ("medium", cfg.get("scroll_medium_min", 450), cfg.get("scroll_medium_max", 750),
+             cfg.get("pause_after_medium_min", 1.5), cfg.get("pause_after_medium_max", 3.0)),
+            ("large", cfg.get("scroll_large_min", 800), cfg.get("scroll_large_max", 1400),
+             cfg.get("pause_after_large_min", 0.8), cfg.get("pause_after_large_max", 1.5)),
+        ]
+        weights = [
+            cfg.get("weight_scroll_small", 32),
+            cfg.get("weight_scroll_medium", 28),
+            cfg.get("weight_scroll_large", 10),
+        ]
+
+        num_scrolls = random.randint(2, 4)
+        for _ in range(num_scrolls):
+            if self.is_stopped():
+                return
+            chosen = random.choices(scroll_types, weights=weights, k=1)[0]
+            _, px_min, px_max, pause_min, pause_max = chosen
+            px = random.randint(int(px_min), int(px_max))
+            self.driver.execute_script(f"window.scrollBy(0, {px});")
+            time.sleep(random.uniform(pause_min, pause_max))
+
+        # Occasional hover (same chance as feed)
+        hover_chance = cfg.get("hover_chance", 0.12)
+        if random.random() < hover_chance:
+            time.sleep(random.uniform(1.0, 3.0))
+
     def _execute_likes(self, count: int):
         """Like tweets — browse the home timeline and like naturally."""
         done = 0
@@ -492,7 +530,7 @@ class TwitterWorker(BaseWorker):
                     continue
 
                 # Scroll down a bit to look natural
-                self._scroll_naturally(1)
+                self._scroll_profile()
                 time.sleep(random.uniform(1.0, 2.0))
 
                 follow_result = self._find_and_click_follow()
@@ -697,18 +735,6 @@ class TwitterWorker(BaseWorker):
                     msg += f" (de {posts_to_open} planejados)"
                 self._log_activity("browse", status, error_message=msg)
 
-        # Load scroll config from settings
-        scroll_config = None
-        if self.db:
-            try:
-                row = self.db.fetch_one(
-                    "SELECT value FROM settings WHERE key = 'scroll_config'"
-                )
-                if row:
-                    scroll_config = json.loads(row["value"])
-            except Exception:
-                pass
-
         browser = BrowseFeedAction(self.driver, logger)
         browser.execute(
             duration_minutes=duration_min,
@@ -716,7 +742,7 @@ class TwitterWorker(BaseWorker):
             posts_to_open=posts_to_open,
             view_comments_chance=view_comments_chance,
             on_event=_on_browse_event,
-            scroll_config=scroll_config,
+            scroll_config=getattr(self, "_scroll_config", None),
         )
         self._log_activity("browse", "success", error_message="Navegacao do feed concluida")
 
@@ -779,7 +805,7 @@ class TwitterWorker(BaseWorker):
                     continue
 
                 # Scroll a bit to load tweets
-                self._scroll_naturally(2)
+                self._scroll_profile()
 
                 attempts = 0
                 max_attempts = 4
@@ -806,11 +832,11 @@ class TwitterWorker(BaseWorker):
                             logger.info(f"[{self.account['username']}] Like on @{target_user} profile {done}/{count}")
                             break
                         else:
-                            self._scroll_naturally(1)
+                            self._scroll_profile()
                     except Exception as exc:
                         self._log_activity("like", "failed", target_username=target_user, error_message=str(exc))
                         logger.warning(f"Like on profile @{target_user} failed: {exc}")
-                        self._scroll_naturally(1)
+                        self._scroll_profile()
 
                 self._random_delay()
 
@@ -845,6 +871,24 @@ class TwitterWorker(BaseWorker):
                     f"Retweets: {actions.get('retweets',0)}, Unfollows: {actions.get('unfollows',0)}")
             self._log_activity("sistema", "success", error_message=f"Plano do dia: {plan}")
             logger.info(f"[{username}] Day {day_number} plan: {actions}")
+
+            # 1b. Load scroll config: per-account overrides global
+            self._scroll_config = None
+            acct_scroll = self.account.get("scroll_config")
+            if acct_scroll:
+                try:
+                    self._scroll_config = json.loads(acct_scroll) if isinstance(acct_scroll, str) else acct_scroll
+                except (json.JSONDecodeError, TypeError):
+                    pass
+            if self._scroll_config is None and self.db:
+                try:
+                    row = self.db.fetch_one(
+                        "SELECT value FROM settings WHERE key = 'scroll_config'"
+                    )
+                    if row:
+                        self._scroll_config = json.loads(row["value"])
+                except Exception:
+                    pass
 
             # Log targets loaded for this account (for category debugging)
             target_names = [t.get("username", "?") for t in self.targets]

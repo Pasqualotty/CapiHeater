@@ -7,6 +7,8 @@ import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 from datetime import date
 
+from utils.config import DEFAULT_SCROLL_CONFIG, SCROLL_PRESETS
+
 
 class AccountsTab(ttk.Frame):
     """Accounts management tab with treeview table and CRUD dialogs.
@@ -148,7 +150,7 @@ class AccountsTab(ttk.Frame):
     def _open_account_form(self, title: str, account: dict | None) -> None:
         dlg = tk.Toplevel(self)
         dlg.title(title)
-        dlg.geometry("460x520")
+        dlg.geometry("460x580")
         dlg.configure(bg="#1a1a2e")
         dlg.resizable(False, False)
         dlg.grab_set()
@@ -224,6 +226,41 @@ class AccountsTab(ttk.Frame):
                 if cid in existing_cats:
                     cat_listbox.selection_set(i)
 
+        # Scroll config (per-account override)
+        ttk.Label(dlg, text="Perfil de rolagem:", style="Dark.TLabel").pack(anchor=tk.W, **pad)
+        scroll_preset_names = ["Padrao Global", "Lento", "Normal", "Rapido"]
+        combo_scroll = ttk.Combobox(
+            dlg, values=scroll_preset_names, state="readonly",
+            style="Dark.TCombobox", width=37,
+        )
+        combo_scroll.pack(**pad)
+        # Determine current preset for this account
+        if account and account.get("scroll_config"):
+            try:
+                acct_cfg = json.loads(account["scroll_config"]) if isinstance(account["scroll_config"], str) else account["scroll_config"]
+            except (json.JSONDecodeError, TypeError):
+                acct_cfg = None
+            matched = False
+            if acct_cfg:
+                for pname, pdata in SCROLL_PRESETS.items():
+                    ref = pdata if pdata else DEFAULT_SCROLL_CONFIG
+                    if acct_cfg == ref:
+                        combo_scroll.set(pname)
+                        matched = True
+                        break
+                if not matched:
+                    # Check if it matches Normal (DEFAULT_SCROLL_CONFIG)
+                    if acct_cfg == DEFAULT_SCROLL_CONFIG:
+                        combo_scroll.set("Normal")
+                    else:
+                        scroll_preset_names.append("Personalizado")
+                        combo_scroll["values"] = scroll_preset_names
+                        combo_scroll.set("Personalizado")
+            else:
+                combo_scroll.set("Padrao Global")
+        else:
+            combo_scroll.set("Padrao Global")
+
         # Notes
         ttk.Label(dlg, text="Notas:", style="Dark.TLabel").pack(anchor=tk.W, **pad)
         txt_notes = tk.Text(dlg, height=3, width=40, bg="#0d1b2a", fg="#e0e0e0", insertbackground="#e0e0e0", relief="flat")
@@ -243,6 +280,17 @@ class AccountsTab(ttk.Frame):
             sched_id = schedule_ids[sched_idx] if sched_idx >= 0 else 1
             notes = txt_notes.get("1.0", tk.END).strip()
 
+            # Resolve scroll config from preset selection
+            scroll_choice = combo_scroll.get()
+            if scroll_choice == "Padrao Global":
+                scroll_config_json = None
+            elif scroll_choice == "Personalizado":
+                # Keep existing custom config unchanged
+                scroll_config_json = account.get("scroll_config") if account else None
+            else:
+                preset_data = SCROLL_PRESETS.get(scroll_choice)
+                scroll_config_json = json.dumps(preset_data if preset_data else DEFAULT_SCROLL_CONFIG)
+
             # Get selected categories
             selected_cat_ids = [cat_ids[i] for i in cat_listbox.curselection()]
 
@@ -252,6 +300,7 @@ class AccountsTab(ttk.Frame):
                     "username": username,
                     "proxy": proxy,
                     "schedule_id": sched_id,
+                    "scroll_config": scroll_config_json,
                     "notes": notes,
                 }
                 cookie_path = cookie_var.get().strip()
@@ -279,6 +328,9 @@ class AccountsTab(ttk.Frame):
                     schedule_id=sched_id,
                     start_date=date.today().isoformat(),
                 )
+                # Save per-account scroll config if not global default
+                if scroll_config_json is not None:
+                    self.app.account_manager.update_account(new_id, scroll_config=scroll_config_json)
                 if selected_cat_ids:
                     self.app.category_manager.set_account_categories(new_id, selected_cat_ids)
                 self.app.set_status(f"Conta @{username} adicionada")
