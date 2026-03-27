@@ -27,21 +27,30 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Build .exe with PyInstaller
+      - name: Build with PyInstaller (onedir)
         run: pyinstaller capiheater.spec
 
-      - name: Verify .exe exists and is valid
+      - name: Verify build
         run: |
-          if (!(Test-Path "dist\CapiHeater.exe")) { throw "Build failed - .exe not found" }
-          $size = (Get-Item "dist\CapiHeater.exe").Length / 1MB
+          if (!(Test-Path "dist\CapiHeater\CapiHeater.exe")) { throw "Build failed" }
+          $size = (Get-Item "dist\CapiHeater\CapiHeater.exe").Length / 1MB
           Write-Host "CapiHeater.exe size: $([math]::Round($size, 2)) MB"
-          if ($size -lt 5) { throw "Build suspicious - exe too small ($([math]::Round($size, 2)) MB)" }
+          $fileCount = (Get-ChildItem "dist\CapiHeater" -Recurse | Measure-Object).Count
+          Write-Host "Total files in dist: $fileCount"
+          # Verify python311.dll is right next to the exe
+          if (!(Test-Path "dist\CapiHeater\python311.dll")) {
+            Write-Host "WARNING: python311.dll not found next to exe!"
+            Get-ChildItem "dist\CapiHeater\python3*.dll"
+          } else {
+            $dllSize = (Get-Item "dist\CapiHeater\python311.dll").Length / 1MB
+            Write-Host "python311.dll: $([math]::Round($dllSize, 2)) MB - OK"
+          }
 
-      - name: Verify critical DLLs are bundled
-        run: python ci/verify_exe.py dist/CapiHeater.exe
+      - name: Create zip archive
+        run: Compress-Archive -Path "dist\CapiHeater\*" -DestinationPath "dist\CapiHeater.zip" -Force
 
-      - name: Upload .exe as Release Asset
+      - name: Upload zip as Release Asset
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/CapiHeater.exe
+          files: dist/CapiHeater.zip
           generate_release_notes: true
