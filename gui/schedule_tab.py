@@ -551,6 +551,14 @@ class ScheduleTab(ttk.Frame):
         tk.Checkbutton(row_lof, variable=lof_var, bg=bg, fg=fg, selectcolor=entry_bg,
                        activebackground=bg, activeforeground=fg).pack(side=tk.LEFT, padx=(8, 0))
 
+        row_rof = tk.Frame(fields_frame, bg=bg)
+        row_rof.pack(fill=tk.X, pady=2)
+        tk.Label(row_rof, text="RT no feed:", font=("Segoe UI", 10), bg=bg, fg=fg, width=14, anchor="w").pack(side=tk.LEFT)
+        rof_var = tk.BooleanVar(value=day.get("retweets_on_feed", True))
+        vars_["retweets_on_feed"] = rof_var
+        tk.Checkbutton(row_rof, variable=rof_var, bg=bg, fg=fg, selectcolor=entry_bg,
+                       activebackground=bg, activeforeground=fg).pack(side=tk.LEFT, padx=(8, 0))
+
         row_fic = tk.Frame(fields_frame, bg=bg)
         row_fic.pack(fill=tk.X, pady=2)
         tk.Label(row_fic, text="Follows iniciais:", font=("Segoe UI", 10), bg=bg, fg=fg, width=14, anchor="w").pack(side=tk.LEFT)
@@ -590,6 +598,7 @@ class ScheduleTab(ttk.Frame):
                 "posts_to_open": vars_["posts_to_open"].get(),
                 "view_comments_chance": vars_["view_comments_chance"].get() / 100.0,
                 "likes_on_feed": vars_["likes_on_feed"].get(),
+                "retweets_on_feed": vars_["retweets_on_feed"].get(),
                 "follow_initial_count": vars_["follow_initial_count"].get(),
             }
         return None

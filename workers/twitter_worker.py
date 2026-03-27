@@ -635,6 +635,78 @@ class TwitterWorker(BaseWorker):
 
         return done
 
+    def _execute_retweets_on_profiles(self, count: int):
+        """Retweet tweets by visiting target profiles."""
+        done = 0
+        if count <= 0:
+            return done
+
+        self._log_activity("retweet", "success", error_message=f"Iniciando {count} retweets em perfis alvo")
+        for target in self._cycle_targets(count):
+            if not self.should_continue():
+                break
+            try:
+                target_user = target.get("username", "").lstrip("@")
+                self.driver.get(f"https://x.com/{target_user}")
+                time.sleep(random.uniform(3, 6))
+
+                page_status = self._handle_profile_page()
+                if page_status in ("not_found", "suspended"):
+                    self._log_activity("retweet", "skipped", target_username=target_user,
+                                       error_message=f"Perfil {page_status} - alvo removido")
+                    self._remove_target(target_user, page_status)
+                    self._random_delay()
+                    continue
+
+                self._scroll_profile()
+
+                attempts = 0
+                max_attempts = 4
+                while attempts < max_attempts:
+                    attempts += 1
+                    if not self.should_continue():
+                        break
+                    try:
+                        rt_buttons = self.driver.find_elements(
+                            "css selector", '[data-testid="retweet"]'
+                        )
+                        if rt_buttons:
+                            btn = random.choice(rt_buttons[:3]) if len(rt_buttons) > 1 else rt_buttons[0]
+                            self.driver.execute_script(
+                                "arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});",
+                                btn,
+                            )
+                            time.sleep(random.uniform(1.5, 3.0))
+                            btn.click()
+                            time.sleep(random.uniform(0.8, 1.5))
+
+                            confirm = self.driver.find_elements(
+                                "css selector", '[data-testid="retweetConfirm"]'
+                            )
+                            if confirm:
+                                confirm[0].click()
+                                done += 1
+                                self._send("action_complete", action="retweet", target=target_user, progress=done)
+                                self._log_activity("retweet", "success", target_username=target_user,
+                                                   target_url=f"https://x.com/{target_user}")
+                                self._record_action(target_user, "retweet", getattr(self, "_current_day", 1))
+                                logger.info(f"[{self.account['username']}] RT on @{target_user} {done}/{count}")
+                            break
+                        else:
+                            self._scroll_profile()
+                    except Exception as exc:
+                        self._log_activity("retweet", "failed", target_username=target_user, error_message=str(exc))
+                        logger.warning(f"RT on profile @{target_user} failed: {exc}")
+                        self._scroll_profile()
+
+                self._random_delay()
+
+            except Exception as exc:
+                logger.warning(f"RT on profile failed for {target.get('username')}: {exc}")
+                self._random_delay()
+
+        return done
+
     def _execute_unfollows(self, count: int):
         """Unfollow accounts from the following list."""
         done = 0
@@ -930,6 +1002,7 @@ class TwitterWorker(BaseWorker):
             posts_to_open = actions.get("posts_to_open", 0)
             view_comments_chance = actions.get("view_comments_chance", 0.3)
             likes_on_feed = actions.get("likes_on_feed", True)
+            retweets_on_feed = actions.get("retweets_on_feed", True)
             follow_initial_count = actions.get("follow_initial_count", 0)
 
             # 3b. Execute initial follows IMMEDIATELY after login
@@ -991,7 +1064,11 @@ class TwitterWorker(BaseWorker):
                     self._send("status", status="stopped", results=results)
                     return
 
-            results["retweets"] = self._execute_retweets(actions.get("retweets", 0))
+            rt_count = actions.get("retweets", 0)
+            if retweets_on_feed:
+                results["retweets"] = self._execute_retweets(rt_count)
+            else:
+                results["retweets"] = self._execute_retweets_on_profiles(rt_count)
             if not self.should_continue():
                 self._send("status", status="stopped", results=results)
                 return
