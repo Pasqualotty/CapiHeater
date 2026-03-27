@@ -3,6 +3,7 @@ AccountsTab - CRUD interface for managing Twitter/X accounts.
 """
 
 import json
+import webbrowser
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 from datetime import date
@@ -100,6 +101,7 @@ class AccountsTab(ttk.Frame):
         # Bindings
         self._tree.bind("<Control-a>", self._select_all)
         self._tree.bind("<Button-3>", self._show_context_menu)
+        self._tree.bind("<Double-1>", lambda _e: self._open_profile())
         self._tree.bind("<<TreeviewSelect>>", self._on_selection_changed)
 
         # Selection info
@@ -130,11 +132,14 @@ class AccountsTab(ttk.Frame):
             self._tree.selection_set(iid)
 
         menu = tk.Menu(self, tearoff=0, bg="#16213e", fg="#e0e0e0", activebackground="#0f3460")
+        menu.add_command(label="Abrir Perfil", command=self._open_profile)
+        menu.add_separator()
         menu.add_command(label="Editar", command=self._edit_account_dialog)
         menu.add_command(label="Importar Cookies", command=self._import_cookies)
+        menu.add_command(label="Alternar Ativo", command=self._toggle_active)
         menu.add_separator()
         menu.add_command(label="Reiniciar Cronograma", command=self._reset_schedule)
-        menu.add_command(label="Excluir", command=self._delete_account)
+        menu.add_command(label="Excluir Selecionados", command=self._delete_account)
         menu.add_separator()
         menu.add_command(label="Selecionar Todos", command=self._select_all)
         menu.tk_popup(event.x_root, event.y_root)
@@ -158,6 +163,7 @@ class AccountsTab(ttk.Frame):
             cat_label = ", ".join(cat_names) if cat_names else "—"
             self._all_accounts.append({
                 "id": acc["id"],
+                "username": acc.get("username", "???"),
                 "values": (
                     f"@{acc.get('username', '???')}",
                     status_label,
@@ -175,15 +181,17 @@ class AccountsTab(ttk.Frame):
         """Apply the search filter and repopulate the treeview."""
         self._tree.delete(*self._tree.get_children())
         self._row_map.clear()
+        self._username_map: dict[str, str] = {}
 
         query = self._search_var.get().strip().lower()
 
         for item in getattr(self, "_all_accounts", []):
-            username = item["values"][0].lower()
-            if query and query not in username:
+            display_name = item["values"][0].lower()
+            if query and query not in display_name:
                 continue
             iid = self._tree.insert("", tk.END, values=item["values"])
             self._row_map[iid] = item["id"]
+            self._username_map[iid] = item["username"]
 
     def _get_schedule_names(self) -> dict[int, str]:
         rows = self.app.db.fetch_all("SELECT id, name FROM schedules ORDER BY id")
@@ -412,6 +420,38 @@ class AccountsTab(ttk.Frame):
     # ==================================================================
     # Actions
     # ==================================================================
+
+    def _open_profile(self) -> None:
+        """Open selected accounts' Twitter/X profiles in the browser."""
+        sel = self._tree.selection()
+        if not sel:
+            messagebox.showwarning("Aviso", "Selecione uma ou mais contas.", parent=self)
+            return
+        for iid in sel:
+            username = self._username_map.get(iid, "")
+            if username:
+                webbrowser.open(f"https://x.com/{username}")
+
+    def _toggle_active(self) -> None:
+        """Toggle status between idle and paused for selected accounts."""
+        ids = self._get_selected_ids()
+        if not ids:
+            messagebox.showwarning("Aviso", "Selecione uma ou mais contas.", parent=self)
+            return
+        toggled = 0
+        for aid in ids:
+            acc = self.app.account_manager.get_account(aid)
+            if acc is None:
+                continue
+            current = acc.get("status", "idle")
+            if current in ("idle", "error", "completed"):
+                self.app.account_manager.update_status(aid, "paused")
+                toggled += 1
+            elif current == "paused":
+                self.app.account_manager.update_status(aid, "idle")
+                toggled += 1
+        self.app.set_status(f"{toggled} conta(s) alternada(s)")
+        self.refresh()
 
     def _reset_schedule(self) -> None:
         """Reset selected accounts' schedules to day 1 (today)."""
