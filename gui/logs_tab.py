@@ -171,7 +171,7 @@ class LogsTab(BaseTab):
             query += " AND al.status = ?"
             params.append(status)
 
-        query += " ORDER BY al.executed_at DESC LIMIT 1000"
+        query += " ORDER BY al.id DESC LIMIT 1000"
 
         rows = self.app.db.fetch_all(query, tuple(params))
 
