@@ -1135,6 +1135,7 @@ class TwitterWorker(BaseWorker):
                 "ERR_SOCKS_CONNECTION_FAILED",
                 "ERR_PROXY_CONNECTION_FAILED",
                 "ERR_TUNNEL_CONNECTION_FAILED",
+                "ERR_NAME_NOT_RESOLVED",
             ))
 
             if browser_closed:
