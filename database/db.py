@@ -41,7 +41,7 @@ class Database:
                     name TEXT NOT NULL,
                     description TEXT DEFAULT '',
                     schedule_json TEXT NOT NULL,
-                    created_at TEXT DEFAULT (datetime('now'))
+                    created_at TEXT DEFAULT (datetime('now', 'localtime'))
                 )
             """)
 
@@ -57,8 +57,8 @@ class Database:
                     current_day INTEGER DEFAULT 1,
                     scroll_config TEXT DEFAULT NULL,
                     notes TEXT DEFAULT '',
-                    created_at TEXT DEFAULT (datetime('now')),
-                    updated_at TEXT DEFAULT (datetime('now')),
+                    created_at TEXT DEFAULT (datetime('now', 'localtime')),
+                    updated_at TEXT DEFAULT (datetime('now', 'localtime')),
                     FOREIGN KEY (schedule_id) REFERENCES schedules(id)
                 )
             """)
@@ -70,7 +70,7 @@ class Database:
                     url TEXT NOT NULL,
                     priority INTEGER DEFAULT 1,
                     active INTEGER DEFAULT 1,
-                    created_at TEXT DEFAULT (datetime('now'))
+                    created_at TEXT DEFAULT (datetime('now', 'localtime'))
                 )
             """)
 
@@ -83,7 +83,7 @@ class Database:
                     target_url TEXT,
                     status TEXT NOT NULL,
                     error_message TEXT DEFAULT NULL,
-                    executed_at TEXT DEFAULT (datetime('now')),
+                    executed_at TEXT DEFAULT (datetime('now', 'localtime')),
                     FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE
                 )
             """)
@@ -99,7 +99,7 @@ class Database:
                 CREATE TABLE IF NOT EXISTS categories (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     name TEXT NOT NULL UNIQUE,
-                    created_at TEXT DEFAULT (datetime('now'))
+                    created_at TEXT DEFAULT (datetime('now', 'localtime'))
                 )
             """)
 
@@ -130,7 +130,7 @@ class Database:
                     target_username TEXT NOT NULL,
                     action_type TEXT NOT NULL,
                     schedule_day INTEGER NOT NULL,
-                    executed_at TEXT DEFAULT (datetime('now')),
+                    executed_at TEXT DEFAULT (datetime('now', 'localtime')),
                     FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE
                 )
             """)

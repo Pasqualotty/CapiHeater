@@ -2,6 +2,8 @@
 LogsTab - Activity log viewer with filters and auto-refresh.
 """
 
+from datetime import datetime
+
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
@@ -176,8 +178,16 @@ class LogsTab(BaseTab):
             status_val = row.get("status", "")
             color = QColor(_STATUS_COLORS.get(status_val, "#e0e0e0"))
 
+            # Format date from YYYY-MM-DD HH:MM:SS to DD/MM/YYYY HH:MM:SS
+            raw_date = row.get("executed_at", "")
+            try:
+                dt = datetime.strptime(raw_date, "%Y-%m-%d %H:%M:%S")
+                formatted_date = dt.strftime("%d/%m/%Y %H:%M:%S")
+            except (ValueError, TypeError):
+                formatted_date = raw_date
+
             values = [
-                row.get("executed_at", ""),
+                formatted_date,
                 f"@{row.get('username', '???')}",
                 row.get("action_type", ""),
                 f"@{row.get('target_username', '')}" if row.get("target_username") else "\u2014",
