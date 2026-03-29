@@ -81,6 +81,12 @@ def main():
 
     app = QApplication(sys.argv)
 
+    # Set application icon (taskbar + window)
+    from gui.theme import ICON_PATH
+    if os.path.isfile(ICON_PATH):
+        from PySide6.QtGui import QIcon
+        app.setWindowIcon(QIcon(ICON_PATH))
+
     # Apply global dark theme
     from gui.theme import QSS
     app.setStyleSheet(QSS)

@@ -60,6 +60,13 @@ class CapiHeaterApp(QMainWindow):
         self.setMinimumSize(900, 550)
         self._center_window(1100, 700)
 
+        # ---- Window icon ----
+        from gui.theme import ICON_PATH
+        import os
+        if os.path.isfile(ICON_PATH):
+            from PySide6.QtGui import QIcon
+            self.setWindowIcon(QIcon(ICON_PATH))
+
         # ---- Backend services ----
         db_path = DB_PATH
         if auth_session:

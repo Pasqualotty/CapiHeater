@@ -55,6 +55,13 @@ class LoginWindow(QDialog):
         self.setFixedSize(400, 480)
         self.setStyleSheet(f"background-color: {BG_DARK};")
 
+        # Window icon
+        from gui.theme import ICON_PATH
+        import os
+        if os.path.isfile(ICON_PATH):
+            from PySide6.QtGui import QIcon
+            self.setWindowIcon(QIcon(ICON_PATH))
+
         # Centre on screen
         screen = self.screen().geometry()
         x = (screen.width() - 400) // 2
