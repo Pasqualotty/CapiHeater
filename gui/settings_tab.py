@@ -115,6 +115,9 @@ class SettingsTab(BaseTab):
         self._ent_proxy.setPlaceholderText("socks5://ip:porta ou http://ip:porta")
         general_form.addRow("Proxy padrao:", self._ent_proxy)
 
+        from gui.proxy_tester import create_proxy_test_row
+        general_form.addRow("", create_proxy_test_row(self._ent_proxy))
+
         # Log level
         self._combo_log = QComboBox()
         self._combo_log.addItems(["DEBUG", "INFO", "WARNING", "ERROR"])
