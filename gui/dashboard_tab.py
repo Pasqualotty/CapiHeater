@@ -2,32 +2,56 @@
 DashboardTab - Overview of all accounts and quick controls.
 """
 
-import tkinter as tk
-from tkinter import ttk, messagebox, simpledialog
 from datetime import date, timedelta
 
-from gui.widgets.status_indicator import StatusIndicator, STATUS_COLORS
-from gui.widgets.account_card import AccountCard
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QColor
+from PySide6.QtWidgets import (
+    QFrame,
+    QHBoxLayout,
+    QHeaderView,
+    QInputDialog,
+    QLabel,
+    QMenu,
+    QMessageBox,
+    QPushButton,
+    QTableWidget,
+    QTableWidgetItem,
+    QVBoxLayout,
+)
+
+from gui.base import BaseTab
+from gui.theme import (
+    COLOR_ERROR,
+    COLOR_SUCCESS,
+    COLOR_WARNING,
+    FG_MUTED,
+    FG_TITLE,
+)
+
+_STATUS_COLORS = {
+    "running": COLOR_SUCCESS,
+    "paused": COLOR_WARNING,
+    "error": COLOR_ERROR,
+    "idle": "#9e9e9e",
+    "completed": "#2979ff",
+    "stopping": "#ff9100",
+}
 
 
-class DashboardTab(ttk.Frame):
+class DashboardTab(BaseTab):
     """Dashboard showing overview cards and per-account status list.
 
     Parameters
     ----------
-    parent : tk.Widget
-        Parent frame (the notebook tab container).
     app : CapiHeaterApp
         Reference to the main application instance.
     """
 
-    def __init__(self, parent, app, **kwargs):
-        super().__init__(parent, style="Tab.TFrame", **kwargs)
-        self.app = app
-
-        self._account_cards: dict[int, AccountCard] = {}
-        self._account_rows: dict[int, dict] = {}
-
+    def __init__(self, app, parent=None):
+        super().__init__(app, parent)
+        self._account_rows: dict[int, int] = {}  # account_id -> table row
+        self._accounts_cache: list[dict] = []
         self._build_ui()
         self.refresh()
 
@@ -36,84 +60,111 @@ class DashboardTab(ttk.Frame):
     # ==================================================================
 
     def _build_ui(self) -> None:
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(6)
+
         # ---------- Overview cards row ----------
-        overview_frame = ttk.Frame(self, style="Dark.TFrame")
-        overview_frame.pack(fill=tk.X, padx=12, pady=(12, 6))
+        cards_layout = QHBoxLayout()
+        cards_layout.setSpacing(12)
 
-        self._card_data = {
-            "total": {"label": "Total de Contas", "var": tk.StringVar(value="0")},
-            "running": {"label": "Rodando", "var": tk.StringVar(value="0")},
-            "paused": {"label": "Pausadas", "var": tk.StringVar(value="0")},
-            "errors": {"label": "Erros", "var": tk.StringVar(value="0")},
-        }
+        self._card_labels: dict[str, QLabel] = {}
+        card_defs = [
+            ("total", "Total de Contas"),
+            ("running", "Rodando"),
+            ("paused", "Pausadas"),
+            ("errors", "Erros"),
+        ]
+        for key, caption in card_defs:
+            card = QFrame()
+            card.setObjectName("card")
+            card_layout = QVBoxLayout(card)
+            card_layout.setContentsMargins(16, 12, 16, 12)
+            card_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
-        for key, info in self._card_data.items():
-            card = ttk.Frame(overview_frame, style="Card.TFrame")
-            card.pack(side=tk.LEFT, expand=True, fill=tk.BOTH, padx=6, pady=4)
+            val_lbl = QLabel("0")
+            val_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            val_lbl.setStyleSheet(f"font-size: 20pt; font-weight: bold; color: {FG_TITLE};")
+            card_layout.addWidget(val_lbl)
 
-            val_lbl = ttk.Label(card, textvariable=info["var"], style="OverviewValue.TLabel")
-            val_lbl.pack(padx=16, pady=(12, 0))
+            cap_lbl = QLabel(caption)
+            cap_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            cap_lbl.setStyleSheet(f"font-size: 9pt; color: {FG_MUTED};")
+            card_layout.addWidget(cap_lbl)
 
-            cap_lbl = ttk.Label(card, text=info["label"], style="OverviewCaption.TLabel")
-            cap_lbl.pack(padx=16, pady=(0, 12))
+            self._card_labels[key] = val_lbl
+            cards_layout.addWidget(card)
+
+        layout.addLayout(cards_layout)
 
         # ---------- Buttons row ----------
-        btn_frame = ttk.Frame(self, style="Dark.TFrame")
-        btn_frame.pack(fill=tk.X, padx=12, pady=6)
+        btn_layout = QHBoxLayout()
+        btn_layout.setSpacing(6)
 
-        ttk.Button(btn_frame, text="Iniciar Todos", style="Accent.TButton", command=self._start_all).pack(side=tk.LEFT, padx=(0, 6))
-        ttk.Button(btn_frame, text="Parar Todos", style="Danger.TButton", command=self._stop_all).pack(side=tk.LEFT, padx=(0, 6))
-        ttk.Button(btn_frame, text="Atualizar", style="Accent.TButton", command=self.refresh).pack(side=tk.LEFT)
+        btn_start_all = QPushButton("Iniciar Todos")
+        btn_start_all.setObjectName("accent")
+        btn_start_all.clicked.connect(self._start_all)
+        btn_layout.addWidget(btn_start_all)
 
-        # ---------- Account list ----------
-        list_frame = ttk.Frame(self, style="Dark.TFrame")
-        list_frame.pack(fill=tk.BOTH, expand=True, padx=12, pady=(6, 12))
+        btn_stop_all = QPushButton("Parar Todos")
+        btn_stop_all.setObjectName("danger")
+        btn_stop_all.clicked.connect(self._stop_all)
+        btn_layout.addWidget(btn_stop_all)
 
-        columns = ("status_icon", "username", "status", "dia", "acoes")
-        self._tree = ttk.Treeview(
-            list_frame,
-            columns=columns,
-            show="headings",
-            style="Dark.Treeview",
-            selectmode="extended",
-        )
+        btn_refresh = QPushButton("Atualizar")
+        btn_refresh.setObjectName("accent")
+        btn_refresh.clicked.connect(self.refresh)
+        btn_layout.addWidget(btn_refresh)
 
-        self._tree.heading("status_icon", text="")
-        self._tree.heading("username", text="Conta")
-        self._tree.heading("status", text="Status")
-        self._tree.heading("dia", text="Dia")
-        self._tree.heading("acoes", text="")
+        btn_layout.addStretch()
+        layout.addLayout(btn_layout)
 
-        self._tree.column("status_icon", width=30, anchor=tk.CENTER, stretch=False)
-        self._tree.column("username", width=200, anchor=tk.W)
-        self._tree.column("status", width=120, anchor=tk.CENTER)
-        self._tree.column("dia", width=80, anchor=tk.CENTER)
-        self._tree.column("acoes", width=200, anchor=tk.CENTER)
+        # ---------- Account table ----------
+        self._table = QTableWidget()
+        self._table.setColumnCount(4)
+        self._table.setHorizontalHeaderLabels(["", "Conta", "Status", "Dia"])
+        self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self._table.setSelectionMode(QTableWidget.SelectionMode.ExtendedSelection)
+        self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self._table.setAlternatingRowColors(True)
+        self._table.verticalHeader().setVisible(False)
+        self._table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._table.customContextMenuRequested.connect(self._show_context_menu)
+        self._table.itemSelectionChanged.connect(self._on_selection_changed)
 
-        scrollbar = ttk.Scrollbar(list_frame, orient=tk.VERTICAL, command=self._tree.yview)
-        self._tree.configure(yscrollcommand=scrollbar.set)
+        header = self._table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
+        header.resizeSection(0, 30)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
 
-        self._tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-
-        # Per-account action buttons (context menu)
-        self._tree.bind("<Button-3>", self._show_context_menu)
-        self._tree.bind("<Control-a>", self._select_all)
-        self._tree.bind("<<TreeviewSelect>>", self._on_selection_changed)
+        layout.addWidget(self._table)
 
         # Selection info
-        sel_frame = ttk.Frame(self, style="Dark.TFrame")
-        sel_frame.pack(fill=tk.X, padx=12, pady=(0, 2))
-        self._sel_info = tk.StringVar(value="")
-        ttk.Label(sel_frame, textvariable=self._sel_info, style="Dark.TLabel").pack(side=tk.LEFT)
+        self._sel_info = QLabel("")
+        layout.addWidget(self._sel_info)
 
-        # Action buttons below tree
-        action_frame = ttk.Frame(self, style="Dark.TFrame")
-        action_frame.pack(fill=tk.X, padx=12, pady=(0, 12))
+        # Action buttons below table
+        action_layout = QHBoxLayout()
+        action_layout.setSpacing(6)
 
-        ttk.Button(action_frame, text="Iniciar Selecionadas", style="Accent.TButton", command=self._start_selected).pack(side=tk.LEFT, padx=(0, 6))
-        ttk.Button(action_frame, text="Pausar Selecionadas", style="Accent.TButton", command=self._pause_selected).pack(side=tk.LEFT, padx=(0, 6))
-        ttk.Button(action_frame, text="Parar Selecionadas", style="Danger.TButton", command=self._stop_selected).pack(side=tk.LEFT)
+        btn_start_sel = QPushButton("Iniciar Selecionadas")
+        btn_start_sel.setObjectName("accent")
+        btn_start_sel.clicked.connect(self._start_selected)
+        action_layout.addWidget(btn_start_sel)
+
+        btn_pause_sel = QPushButton("Pausar Selecionadas")
+        btn_pause_sel.clicked.connect(self._pause_selected)
+        action_layout.addWidget(btn_pause_sel)
+
+        btn_stop_sel = QPushButton("Parar Selecionadas")
+        btn_stop_sel.setObjectName("danger")
+        btn_stop_sel.clicked.connect(self._stop_selected)
+        action_layout.addWidget(btn_stop_sel)
+
+        action_layout.addStretch()
+        layout.addLayout(action_layout)
 
     # ==================================================================
     # Data refresh
@@ -122,6 +173,7 @@ class DashboardTab(ttk.Frame):
     def refresh(self) -> None:
         """Reload account data from the database and update the view."""
         accounts = self.app.account_manager.get_all_accounts()
+        self._accounts_cache = accounts
 
         # Update overview cards
         total = len(accounts)
@@ -129,40 +181,40 @@ class DashboardTab(ttk.Frame):
         paused = sum(1 for a in accounts if a.get("status") == "paused")
         errors = sum(1 for a in accounts if a.get("status") == "error")
 
-        self._card_data["total"]["var"].set(str(total))
-        self._card_data["running"]["var"].set(str(running))
-        self._card_data["paused"]["var"].set(str(paused))
-        self._card_data["errors"]["var"].set(str(errors))
+        self._card_labels["total"].setText(str(total))
+        self._card_labels["running"].setText(str(running))
+        self._card_labels["paused"].setText(str(paused))
+        self._card_labels["errors"].setText(str(errors))
 
-        # Update tree
-        self._tree.delete(*self._tree.get_children())
+        # Update table
+        self._table.setRowCount(0)
         self._account_rows.clear()
 
-        for acc in accounts:
+        self._table.setRowCount(len(accounts))
+        for i, acc in enumerate(accounts):
             aid = acc.get("id", 0)
             status = acc.get("status", "idle")
-            status_display = self._status_label(status)
-            dot = self._status_dot(status)
             day = acc.get("current_day", 1)
+            color = QColor(_STATUS_COLORS.get(status, "#9e9e9e"))
 
-            iid = self._tree.insert(
-                "",
-                tk.END,
-                values=(dot, f"@{acc.get('username', '???')}", status_display, f"Dia {day}", ""),
-            )
-            self._account_rows[aid] = {"iid": iid, "account": acc}
+            dot = "\u25cf" if status in ("running", "paused", "error", "completed") else "\u25cb"
+            values = [dot, f"@{acc.get('username', '???')}", self._status_label(status), f"Dia {day}"]
+            alignments = [
+                Qt.AlignmentFlag.AlignCenter,
+                Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                Qt.AlignmentFlag.AlignCenter,
+                Qt.AlignmentFlag.AlignCenter,
+            ]
 
-        # Tag-based coloring for status dots
-        for aid, row_info in self._account_rows.items():
-            status = row_info["account"].get("status", "idle")
-            tag = f"status_{status}"
-            self._tree.item(row_info["iid"], tags=(tag,))
+            for col, (val, align) in enumerate(zip(values, alignments)):
+                item = QTableWidgetItem(val)
+                item.setForeground(color)
+                item.setTextAlignment(align)
+                if col == 0:
+                    item.setData(Qt.ItemDataRole.UserRole, aid)
+                self._table.setItem(i, col, item)
 
-        self._tree.tag_configure("status_running", foreground="#00e676")
-        self._tree.tag_configure("status_paused", foreground="#ffea00")
-        self._tree.tag_configure("status_error", foreground="#ff1744")
-        self._tree.tag_configure("status_idle", foreground="#9e9e9e")
-        self._tree.tag_configure("status_completed", foreground="#2979ff")
+            self._account_rows[aid] = i
 
     def on_status_update(self, msg: dict) -> None:
         """Handle a status_update message from the engine queue."""
@@ -184,26 +236,23 @@ class DashboardTab(ttk.Frame):
 
     def _get_selected_account_ids(self) -> list[int]:
         """Return list of selected account IDs."""
-        selection = self._tree.selection()
         ids = []
-        for iid in selection:
-            for aid, row_info in self._account_rows.items():
-                if row_info["iid"] == iid:
+        for idx in self._table.selectionModel().selectedRows():
+            item = self._table.item(idx.row(), 0)
+            if item:
+                aid = item.data(Qt.ItemDataRole.UserRole)
+                if aid is not None:
                     ids.append(aid)
-                    break
         return ids
 
-    def _select_all(self, _event=None) -> None:
-        self._tree.selection_set(self._tree.get_children())
-
-    def _on_selection_changed(self, _event=None) -> None:
-        count = len(self._tree.selection())
+    def _on_selection_changed(self) -> None:
+        count = len(self._table.selectionModel().selectedRows())
         if count == 0:
-            self._sel_info.set("")
+            self._sel_info.setText("")
         elif count == 1:
-            self._sel_info.set("1 conta selecionada")
+            self._sel_info.setText("1 conta selecionada")
         else:
-            self._sel_info.set(f"{count} contas selecionadas")
+            self._sel_info.setText(f"{count} contas selecionadas")
 
     def _start_selected(self) -> None:
         ids = self._get_selected_account_ids()
@@ -237,22 +286,23 @@ class DashboardTab(ttk.Frame):
         self.app.set_status(f"{len(ids)} conta(s) parada(s)")
         self.refresh()
 
-    def _show_context_menu(self, event) -> None:
+    def _show_context_menu(self, pos) -> None:
         """Right-click context menu for per-account actions."""
-        iid = self._tree.identify_row(event.y)
-        if not iid:
+        item = self._table.itemAt(pos)
+        if not item:
             return
-        # Only change selection on right-click if the clicked item isn't already selected
-        if iid not in self._tree.selection():
-            self._tree.selection_set(iid)
 
-        menu = tk.Menu(self, tearoff=0, bg="#16213e", fg="#e0e0e0", activebackground="#0f3460")
-        menu.add_command(label="Iniciar", command=self._start_selected)
-        menu.add_command(label="Pausar", command=self._pause_selected)
-        menu.add_command(label="Parar", command=self._stop_selected)
-        menu.add_separator()
-        menu.add_command(label="Editar Dia", command=self._edit_day)
-        menu.tk_popup(event.x_root, event.y_root)
+        row = item.row()
+        if row not in [idx.row() for idx in self._table.selectionModel().selectedRows()]:
+            self._table.selectRow(row)
+
+        menu = QMenu(self)
+        menu.addAction("Iniciar", self._start_selected)
+        menu.addAction("Pausar", self._pause_selected)
+        menu.addAction("Parar", self._stop_selected)
+        menu.addSeparator()
+        menu.addAction("Editar Dia", self._edit_day)
+        menu.exec(self._table.viewport().mapToGlobal(pos))
 
     def _edit_day(self) -> None:
         """Let the user change which warming day an account will run next."""
@@ -262,25 +312,26 @@ class DashboardTab(ttk.Frame):
             return
 
         aid = ids[0]
-        account = self._account_rows[aid]["account"]
+        row_idx = self._account_rows.get(aid)
+        if row_idx is None:
+            return
+        account = self._accounts_cache[row_idx]
         status = account.get("status", "idle")
 
         if status in ("running", "paused"):
-            messagebox.showwarning(
-                "Aviso", "Pare a conta antes de editar o dia.", parent=self,
-            )
+            QMessageBox.warning(self, "Aviso", "Pare a conta antes de editar o dia.")
             return
 
         current = account.get("current_day", 1)
-        new_day = simpledialog.askinteger(
+        new_day, ok = QInputDialog.getInt(
+            self,
             "Editar Dia",
             f"Dia atual: {current}\nNovo dia:",
-            initialvalue=current,
-            minvalue=1,
-            maxvalue=365,
-            parent=self,
+            value=current,
+            minValue=1,
+            maxValue=365,
         )
-        if new_day is None or new_day == current:
+        if not ok or new_day == current:
             return
 
         # Back-calculate start_date so Scheduler.get_day_number() returns new_day
@@ -306,14 +357,3 @@ class DashboardTab(ttk.Frame):
             "stopping": "Parando",
         }
         return mapping.get(status, status.capitalize())
-
-    @staticmethod
-    def _status_dot(status: str) -> str:
-        dots = {
-            "running": "\u25cf",   # ●
-            "paused": "\u25cf",
-            "error": "\u25cf",
-            "idle": "\u25cb",      # ○
-            "completed": "\u25cf",
-        }
-        return dots.get(status, "\u25cb")

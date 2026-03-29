@@ -2,27 +2,47 @@
 LogsTab - Activity log viewer with filters and auto-refresh.
 """
 
-import tkinter as tk
-from tkinter import ttk, messagebox
+from PySide6.QtCore import Qt, QTimer
+from PySide6.QtGui import QColor
+from PySide6.QtWidgets import (
+    QCheckBox,
+    QComboBox,
+    QHBoxLayout,
+    QHeaderView,
+    QLabel,
+    QMessageBox,
+    QPushButton,
+    QTableWidget,
+    QTableWidgetItem,
+    QVBoxLayout,
+)
+
+from gui.base import BaseTab
+from gui.theme import COLOR_ERROR, COLOR_SUCCESS, COLOR_WARNING
+
+_STATUS_COLORS = {
+    "success": COLOR_SUCCESS,
+    "failed": COLOR_ERROR,
+    "error": COLOR_ERROR,
+    "skipped": COLOR_WARNING,
+}
 
 
-class LogsTab(ttk.Frame):
+class LogsTab(BaseTab):
     """Activity logs tab with filtering, auto-refresh, and clear functionality.
 
     Parameters
     ----------
-    parent : tk.Widget
-        Parent frame (notebook tab container).
     app : CapiHeaterApp
         Reference to the main application instance.
     """
 
     AUTO_REFRESH_MS = 5000
 
-    def __init__(self, parent, app, **kwargs):
-        super().__init__(parent, style="Tab.TFrame", **kwargs)
-        self.app = app
-        self._auto_refresh_id = None
+    def __init__(self, app, parent=None):
+        super().__init__(app, parent)
+        self._auto_refresh_timer = QTimer(self)
+        self._auto_refresh_timer.timeout.connect(self._auto_refresh_tick)
         self._build_ui()
         self.refresh()
 
@@ -31,94 +51,85 @@ class LogsTab(ttk.Frame):
     # ==================================================================
 
     def _build_ui(self) -> None:
-        # Header
-        header = ttk.Frame(self, style="Dark.TFrame")
-        header.pack(fill=tk.X, padx=12, pady=(12, 6))
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(6)
 
-        ttk.Label(header, text="Logs de Atividade", style="Heading.TLabel").pack(side=tk.LEFT)
+        # Header
+        header_lbl = QLabel("Logs de Atividade")
+        header_lbl.setStyleSheet("font-size: 13pt; font-weight: bold;")
+        layout.addWidget(header_lbl)
 
         # Filters row
-        filter_frame = ttk.Frame(self, style="Dark.TFrame")
-        filter_frame.pack(fill=tk.X, padx=12, pady=(0, 6))
+        filter_layout = QHBoxLayout()
+        filter_layout.setSpacing(6)
 
         # Account filter
-        ttk.Label(filter_frame, text="Conta:", style="Dark.TLabel").pack(side=tk.LEFT, padx=(0, 4))
-        self._filter_account = ttk.Combobox(filter_frame, state="readonly", style="Dark.TCombobox", width=16)
-        self._filter_account.pack(side=tk.LEFT, padx=(0, 12))
-        self._filter_account.bind("<<ComboboxSelected>>", lambda _: self.refresh())
+        filter_layout.addWidget(QLabel("Conta:"))
+        self._filter_account = QComboBox()
+        self._filter_account.setMinimumWidth(130)
+        self._filter_account.currentIndexChanged.connect(lambda: self.refresh())
+        filter_layout.addWidget(self._filter_account)
 
         # Action type filter
-        ttk.Label(filter_frame, text="Acao:", style="Dark.TLabel").pack(side=tk.LEFT, padx=(0, 4))
-        self._filter_action = ttk.Combobox(
-            filter_frame,
-            values=["Todas", "like", "follow", "retweet", "unfollow", "login", "browse", "sistema"],
-            state="readonly",
-            style="Dark.TCombobox",
-            width=12,
+        filter_layout.addWidget(QLabel("Acao:"))
+        self._filter_action = QComboBox()
+        self._filter_action.addItems(
+            ["Todas", "like", "follow", "retweet", "unfollow", "login", "browse", "sistema"]
         )
-        self._filter_action.pack(side=tk.LEFT, padx=(0, 12))
-        self._filter_action.set("Todas")
-        self._filter_action.bind("<<ComboboxSelected>>", lambda _: self.refresh())
+        self._filter_action.setMinimumWidth(100)
+        self._filter_action.currentIndexChanged.connect(lambda: self.refresh())
+        filter_layout.addWidget(self._filter_action)
 
         # Status filter
-        ttk.Label(filter_frame, text="Status:", style="Dark.TLabel").pack(side=tk.LEFT, padx=(0, 4))
-        self._filter_status = ttk.Combobox(
-            filter_frame,
-            values=["Todos", "success", "failed", "skipped"],
-            state="readonly",
-            style="Dark.TCombobox",
-            width=10,
-        )
-        self._filter_status.pack(side=tk.LEFT, padx=(0, 12))
-        self._filter_status.set("Todos")
-        self._filter_status.bind("<<ComboboxSelected>>", lambda _: self.refresh())
+        filter_layout.addWidget(QLabel("Status:"))
+        self._filter_status = QComboBox()
+        self._filter_status.addItems(["Todos", "success", "failed", "skipped"])
+        self._filter_status.setMinimumWidth(90)
+        self._filter_status.currentIndexChanged.connect(lambda: self.refresh())
+        filter_layout.addWidget(self._filter_status)
 
         # Auto-refresh checkbox
-        self._auto_refresh_var = tk.BooleanVar(value=False)
-        chk = ttk.Checkbutton(
-            filter_frame,
-            text="Atualizar automaticamente",
-            variable=self._auto_refresh_var,
-            style="Dark.TCheckbutton",
-            command=self._toggle_auto_refresh,
+        self._auto_refresh_cb = QCheckBox("Atualizar automaticamente")
+        self._auto_refresh_cb.toggled.connect(self._toggle_auto_refresh)
+        filter_layout.addWidget(self._auto_refresh_cb)
+
+        filter_layout.addStretch()
+
+        # Buttons
+        btn_refresh = QPushButton("Atualizar")
+        btn_refresh.setObjectName("accent")
+        btn_refresh.clicked.connect(self.refresh)
+        filter_layout.addWidget(btn_refresh)
+
+        btn_clear = QPushButton("Limpar Logs")
+        btn_clear.setObjectName("danger")
+        btn_clear.clicked.connect(self._clear_logs)
+        filter_layout.addWidget(btn_clear)
+
+        layout.addLayout(filter_layout)
+
+        # Table
+        self._table = QTableWidget()
+        self._table.setColumnCount(6)
+        self._table.setHorizontalHeaderLabels(
+            ["Data/Hora", "Conta", "Acao", "Alvo", "Status", "Erro"]
         )
-        chk.pack(side=tk.LEFT, padx=(0, 12))
+        self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self._table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
+        self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self._table.setAlternatingRowColors(True)
+        self._table.verticalHeader().setVisible(False)
 
-        # Clear button
-        ttk.Button(filter_frame, text="Limpar Logs", style="Danger.TButton", command=self._clear_logs).pack(side=tk.RIGHT)
-        ttk.Button(filter_frame, text="Atualizar", style="Accent.TButton", command=self.refresh).pack(side=tk.RIGHT, padx=(0, 6))
+        header = self._table.horizontalHeader()
+        header.setStretchLastSection(True)
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
 
-        # Treeview
-        tree_frame = ttk.Frame(self, style="Dark.TFrame")
-        tree_frame.pack(fill=tk.BOTH, expand=True, padx=12, pady=(6, 12))
-
-        columns = ("timestamp", "account", "action", "target", "status", "error")
-        self._tree = ttk.Treeview(
-            tree_frame,
-            columns=columns,
-            show="headings",
-            style="Dark.Treeview",
-            selectmode="browse",
-        )
-
-        self._tree.heading("timestamp", text="Data/Hora")
-        self._tree.heading("account", text="Conta")
-        self._tree.heading("action", text="Acao")
-        self._tree.heading("target", text="Alvo")
-        self._tree.heading("status", text="Status")
-        self._tree.heading("error", text="Erro")
-
-        self._tree.column("timestamp", width=150, anchor=tk.W)
-        self._tree.column("account", width=120, anchor=tk.W)
-        self._tree.column("action", width=90, anchor=tk.CENTER)
-        self._tree.column("target", width=140, anchor=tk.W)
-        self._tree.column("status", width=80, anchor=tk.CENTER)
-        self._tree.column("error", width=200, anchor=tk.W)
-
-        scrollbar = ttk.Scrollbar(tree_frame, orient=tk.VERTICAL, command=self._tree.yview)
-        self._tree.configure(yscrollcommand=scrollbar.set)
-        self._tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        layout.addWidget(self._table)
 
     # ==================================================================
     # Data
@@ -126,7 +137,7 @@ class LogsTab(ttk.Frame):
 
     def refresh(self) -> None:
         """Reload logs from the database, applying current filters."""
-        self._tree.delete(*self._tree.get_children())
+        self._table.setRowCount(0)
         self._update_account_filter()
 
         query = """
@@ -139,19 +150,19 @@ class LogsTab(ttk.Frame):
         params: list = []
 
         # Account filter
-        acct = self._filter_account.get()
+        acct = self._filter_account.currentText()
         if acct and acct != "Todas":
             query += " AND a.username = ?"
             params.append(acct.lstrip("@"))
 
         # Action filter
-        action = self._filter_action.get()
+        action = self._filter_action.currentText()
         if action and action != "Todas":
             query += " AND al.action_type = ?"
             params.append(action)
 
         # Status filter
-        status = self._filter_status.get()
+        status = self._filter_status.currentText()
         if status and status != "Todos":
             query += " AND al.status = ?"
             params.append(status)
@@ -160,40 +171,42 @@ class LogsTab(ttk.Frame):
 
         rows = self.app.db.fetch_all(query, tuple(params))
 
-        for row in rows:
+        self._table.setRowCount(len(rows))
+        for i, row in enumerate(rows):
             status_val = row.get("status", "")
-            tag = f"log_{status_val}"
-            iid = self._tree.insert(
-                "",
-                tk.END,
-                values=(
-                    row.get("executed_at", ""),
-                    f"@{row.get('username', '???')}",
-                    row.get("action_type", ""),
-                    f"@{row.get('target_username', '')}" if row.get("target_username") else "—",
-                    status_val,
-                    row.get("error_message") or "—",
-                ),
-                tags=(tag,),
-            )
+            color = QColor(_STATUS_COLORS.get(status_val, "#e0e0e0"))
 
-        self._tree.tag_configure("log_success", foreground="#00e676")
-        self._tree.tag_configure("log_failed", foreground="#ff1744")
-        self._tree.tag_configure("log_error", foreground="#ff1744")
-        self._tree.tag_configure("log_skipped", foreground="#ffea00")
+            values = [
+                row.get("executed_at", ""),
+                f"@{row.get('username', '???')}",
+                row.get("action_type", ""),
+                f"@{row.get('target_username', '')}" if row.get("target_username") else "\u2014",
+                status_val,
+                row.get("error_message") or "\u2014",
+            ]
+            for col, val in enumerate(values):
+                item = QTableWidgetItem(str(val))
+                item.setForeground(color)
+                if col in (2, 4):
+                    item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                self._table.setItem(i, col, item)
 
     def _update_account_filter(self) -> None:
         """Refresh the account filter dropdown."""
         accounts = self.app.account_manager.get_all_accounts()
         names = ["Todas"] + [f"@{a.get('username', '???')}" for a in accounts]
-        current = self._filter_account.get()
-        self._filter_account["values"] = names
-        if current not in names:
-            self._filter_account.set("Todas")
+
+        current = self._filter_account.currentText()
+        self._filter_account.blockSignals(True)
+        self._filter_account.clear()
+        self._filter_account.addItems(names)
+        idx = self._filter_account.findText(current)
+        self._filter_account.setCurrentIndex(idx if idx >= 0 else 0)
+        self._filter_account.blockSignals(False)
 
     def on_new_log(self, msg: dict) -> None:
         """Handle a log message from the engine queue (trigger refresh)."""
-        if self._auto_refresh_var.get():
+        if self._auto_refresh_cb.isChecked():
             self.refresh()
 
     # ==================================================================
@@ -201,27 +214,25 @@ class LogsTab(ttk.Frame):
     # ==================================================================
 
     def _clear_logs(self) -> None:
-        if not messagebox.askyesno(
+        reply = QMessageBox.question(
+            self,
             "Confirmar",
             "Tem certeza que deseja limpar todos os logs?\nEsta acao nao pode ser desfeita.",
-            parent=self,
-        ):
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
             return
         self.app.db.execute("DELETE FROM activity_logs")
         self.app.set_status("Logs limpos")
         self.refresh()
 
-    def _toggle_auto_refresh(self) -> None:
-        if self._auto_refresh_var.get():
-            self._start_auto_refresh()
+    def _toggle_auto_refresh(self, checked: bool) -> None:
+        if checked:
+            self.refresh()
+            self._auto_refresh_timer.start(self.AUTO_REFRESH_MS)
         else:
-            self._stop_auto_refresh()
+            self._auto_refresh_timer.stop()
 
-    def _start_auto_refresh(self) -> None:
+    def _auto_refresh_tick(self) -> None:
         self.refresh()
-        self._auto_refresh_id = self.after(self.AUTO_REFRESH_MS, self._start_auto_refresh)
-
-    def _stop_auto_refresh(self) -> None:
-        if self._auto_refresh_id is not None:
-            self.after_cancel(self._auto_refresh_id)
-            self._auto_refresh_id = None

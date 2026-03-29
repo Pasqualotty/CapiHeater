@@ -4,9 +4,30 @@ LoginWindow - Tela de login do CapiHeater (dark themed, PT-BR).
 
 import json
 import os
-import tkinter as tk
-from tkinter import messagebox
 import threading
+
+from PySide6.QtCore import QTimer, Qt, Signal, Slot
+from PySide6.QtGui import QShortcut, QKeySequence
+from PySide6.QtWidgets import (
+    QCheckBox,
+    QDialog,
+    QLabel,
+    QLineEdit,
+    QMessageBox,
+    QPushButton,
+    QVBoxLayout,
+)
+
+from gui.theme import (
+    ACCENT,
+    ACCENT_HIGHLIGHT,
+    BG_DARK,
+    BG_SECONDARY,
+    COLOR_ERROR,
+    FG_MUTED,
+    FG_TEXT,
+    FG_TITLE,
+)
 
 # App-data directory for persisting last e-mail
 _APP_DATA_DIR = os.path.join(
@@ -16,31 +37,29 @@ _LAST_EMAIL_FILE = os.path.join(_APP_DATA_DIR, "last_email.json")
 _REMEMBER_FILE = os.path.join(_APP_DATA_DIR, "remember.dat")
 _REMEMBER_KEY_FILE = os.path.join(_APP_DATA_DIR, "rkey.dat")
 
-# Theme colours
-BG = "#1a1a2e"
-FG = "#ffffff"
-ACCENT = "#0f3460"
-ENTRY_BG = "#16213e"
-ERROR_FG = "#ff4444"
 
+class LoginWindow(QDialog):
+    """Standalone login dialog. On success, stores ``session``, ``auth``,
+    and ``license_info``, then accepts the dialog so the caller can proceed."""
 
-class LoginWindow(tk.Tk):
-    """Standalone login window. Sets ``self.session`` and ``self.auth``
-    when login succeeds, then destroys itself so the caller can proceed."""
+    # Thread-safe signals for cross-thread UI updates
+    _sig_login_success = Signal(object, object, object, str, bool)
+    _sig_login_failed = Signal(str)
+    _sig_register_done = Signal(str)
+    _sig_register_failed = Signal(str)
 
-    def __init__(self):
-        super().__init__()
+    def __init__(self, parent=None):
+        super().__init__(parent)
 
-        self.title("CapiHeater - Login")
-        self.configure(bg=BG)
-        self.resizable(False, False)
-        self.geometry("400x480")
+        self.setWindowTitle("CapiHeater - Login")
+        self.setFixedSize(400, 480)
+        self.setStyleSheet(f"background-color: {BG_DARK};")
 
         # Centre on screen
-        self.update_idletasks()
-        x = (self.winfo_screenwidth() - 400) // 2
-        y = (self.winfo_screenheight() - 480) // 2
-        self.geometry(f"+{x}+{y}")
+        screen = self.screen().geometry()
+        x = (screen.width() - 400) // 2
+        y = (screen.height() - 480) // 2
+        self.move(x, y)
 
         # Public attributes set after successful login
         self.session = None
@@ -48,6 +67,12 @@ class LoginWindow(tk.Tk):
         self.license_info: dict | None = None
         self._authenticated = False
         self._login_in_progress = False
+
+        # Connect thread-safe signals
+        self._sig_login_success.connect(self._login_success)
+        self._sig_login_failed.connect(self._login_failed)
+        self._sig_register_done.connect(self._register_done)
+        self._sig_register_failed.connect(self._register_failed)
 
         self._build_ui()
         self._load_last_email()
@@ -57,124 +82,120 @@ class LoginWindow(tk.Tk):
     # ------------------------------------------------------------------
 
     def _build_ui(self):
-        # Title / logo area
-        title_lbl = tk.Label(
-            self, text="CapiHeater", font=("Segoe UI", 24, "bold"), bg=BG, fg=FG
-        )
-        title_lbl.pack(pady=(40, 5))
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(50, 40, 50, 20)
+        layout.setSpacing(0)
 
-        subtitle_lbl = tk.Label(
-            self,
-            text="Aquecedor de Contas Twitter/X",
-            font=("Segoe UI", 10),
-            bg=BG,
-            fg="#8888aa",
+        # Title
+        title_lbl = QLabel("CapiHeater")
+        title_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        title_lbl.setStyleSheet(
+            f"color: {FG_TITLE}; font-size: 24pt; font-weight: bold;"
         )
-        subtitle_lbl.pack(pady=(0, 30))
+        layout.addWidget(title_lbl)
 
-        # E-mail
-        tk.Label(self, text="E-mail", font=("Segoe UI", 10), bg=BG, fg=FG).pack(
-            anchor="w", padx=50
-        )
-        self._email_var = tk.StringVar()
-        self._email_entry = tk.Entry(
-            self,
-            textvariable=self._email_var,
-            font=("Segoe UI", 11),
-            bg=ENTRY_BG,
-            fg=FG,
-            insertbackground=FG,
-            relief="flat",
-            highlightthickness=1,
-            highlightcolor=ACCENT,
-        )
-        self._email_entry.pack(fill="x", padx=50, pady=(2, 12), ipady=6)
+        # Subtitle
+        subtitle_lbl = QLabel("Aquecedor de Contas Twitter/X")
+        subtitle_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        subtitle_lbl.setStyleSheet("color: #8888aa; font-size: 10pt;")
+        layout.addWidget(subtitle_lbl)
+        layout.addSpacing(30)
 
-        # Senha
-        tk.Label(self, text="Senha", font=("Segoe UI", 10), bg=BG, fg=FG).pack(
-            anchor="w", padx=50
-        )
-        self._pass_var = tk.StringVar()
-        self._pass_entry = tk.Entry(
-            self,
-            textvariable=self._pass_var,
-            show="*",
-            font=("Segoe UI", 11),
-            bg=ENTRY_BG,
-            fg=FG,
-            insertbackground=FG,
-            relief="flat",
-            highlightthickness=1,
-            highlightcolor=ACCENT,
-        )
-        self._pass_entry.pack(fill="x", padx=50, pady=(2, 10), ipady=6)
+        # E-mail label
+        email_lbl = QLabel("E-mail")
+        email_lbl.setStyleSheet(f"color: {FG_TITLE}; font-size: 10pt;")
+        layout.addWidget(email_lbl)
+        layout.addSpacing(2)
 
-        # Lembrar de mim checkbox
-        self._remember_var = tk.BooleanVar(value=False)
-        tk.Checkbutton(
-            self,
-            text="Lembrar de mim",
-            variable=self._remember_var,
-            font=("Segoe UI", 9),
-            bg=BG,
-            fg="#8888aa",
-            selectcolor=ENTRY_BG,
-            activebackground=BG,
-            activeforeground=FG,
-            cursor="hand2",
-        ).pack(anchor="w", padx=50, pady=(0, 10))
+        # E-mail input
+        self._email_entry = QLineEdit()
+        self._email_entry.setStyleSheet(self._entry_style())
+        layout.addWidget(self._email_entry)
+        layout.addSpacing(12)
 
-        # Error label (hidden by default)
-        self._error_var = tk.StringVar()
-        self._error_lbl = tk.Label(
-            self,
-            textvariable=self._error_var,
-            font=("Segoe UI", 9),
-            bg=BG,
-            fg=ERROR_FG,
-            wraplength=300,
+        # Senha label
+        pass_lbl = QLabel("Senha")
+        pass_lbl.setStyleSheet(f"color: {FG_TITLE}; font-size: 10pt;")
+        layout.addWidget(pass_lbl)
+        layout.addSpacing(2)
+
+        # Senha input
+        self._pass_entry = QLineEdit()
+        self._pass_entry.setEchoMode(QLineEdit.EchoMode.Password)
+        self._pass_entry.setStyleSheet(self._entry_style())
+        layout.addWidget(self._pass_entry)
+        layout.addSpacing(10)
+
+        # Lembrar de mim
+        self._remember_cb = QCheckBox("Lembrar de mim")
+        self._remember_cb.setStyleSheet("color: #8888aa; font-size: 9pt;")
+        self._remember_cb.setCursor(Qt.CursorShape.PointingHandCursor)
+        layout.addWidget(self._remember_cb)
+        layout.addSpacing(8)
+
+        # Error label
+        self._error_lbl = QLabel("")
+        self._error_lbl.setWordWrap(True)
+        self._error_lbl.setStyleSheet(
+            f"color: {COLOR_ERROR}; font-size: 9pt;"
         )
-        self._error_lbl.pack(pady=(0, 8))
+        layout.addWidget(self._error_lbl)
+        layout.addSpacing(8)
 
         # Entrar button
-        self._login_btn = tk.Button(
-            self,
-            text="Entrar",
-            font=("Segoe UI", 11, "bold"),
-            bg=ACCENT,
-            fg=FG,
-            activebackground="#1a5276",
-            activeforeground=FG,
-            relief="flat",
-            cursor="hand2",
-            command=self._on_login,
-        )
-        self._login_btn.pack(fill="x", padx=50, ipady=6)
+        self._login_btn = QPushButton("Entrar")
+        self._login_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._login_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {ACCENT};
+                color: {FG_TITLE};
+                font-size: 11pt;
+                font-weight: bold;
+                padding: 8px;
+                border: none;
+                border-radius: 3px;
+            }}
+            QPushButton:hover {{
+                background-color: {ACCENT_HIGHLIGHT};
+            }}
+            QPushButton:disabled {{
+                background-color: {BG_SECONDARY};
+                color: {FG_MUTED};
+            }}
+        """)
+        self._login_btn.clicked.connect(self._on_login)
+        layout.addWidget(self._login_btn)
+        layout.addSpacing(14)
 
         # Registrar link
-        reg_lbl = tk.Label(
-            self,
-            text="Ainda nao tem conta? Registrar",
-            font=("Segoe UI", 9, "underline"),
-            bg=BG,
-            fg="#5588cc",
-            cursor="hand2",
+        reg_lbl = QLabel("Ainda nao tem conta? Registrar")
+        reg_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        reg_lbl.setStyleSheet(
+            "color: #5588cc; font-size: 9pt; text-decoration: underline;"
         )
-        reg_lbl.pack(pady=(14, 0))
-        reg_lbl.bind("<Button-1>", lambda _e: self._on_register())
+        reg_lbl.setCursor(Qt.CursorShape.PointingHandCursor)
+        reg_lbl.mousePressEvent = lambda _e: self._on_register()
+        layout.addWidget(reg_lbl)
 
         # Loading label
-        self._loading_var = tk.StringVar()
-        tk.Label(
-            self,
-            textvariable=self._loading_var,
-            font=("Segoe UI", 9),
-            bg=BG,
-            fg="#aaaacc",
-        ).pack(pady=(10, 0))
+        self._loading_lbl = QLabel("")
+        self._loading_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._loading_lbl.setStyleSheet("color: #aaaacc; font-size: 9pt;")
+        layout.addWidget(self._loading_lbl)
 
-        # Bind Enter key
-        self.bind("<Return>", lambda _e: self._on_login())
+        layout.addStretch()
+
+        # Enter key shortcut (stored as attribute to prevent GC)
+        self._shortcut_enter = QShortcut(QKeySequence(Qt.Key.Key_Return), self)
+        self._shortcut_enter.activated.connect(self._on_login)
+
+    @staticmethod
+    def _entry_style() -> str:
+        return (
+            f"background-color: {BG_SECONDARY}; color: {FG_TEXT};"
+            f"font-size: 11pt; border: 1px solid {ACCENT};"
+            "border-radius: 3px; padding: 6px;"
+        )
 
     # ------------------------------------------------------------------
     # Persistence helpers
@@ -219,10 +240,10 @@ class LoginWindow(tk.Tk):
 
     def _clear_remember(self):
         """Remove saved credentials."""
-        for f in (_REMEMBER_FILE, _REMEMBER_KEY_FILE):
-            if os.path.exists(f):
+        for filepath in (_REMEMBER_FILE, _REMEMBER_KEY_FILE):
+            if os.path.exists(filepath):
                 try:
-                    os.remove(f)
+                    os.remove(filepath)
                 except Exception:
                     pass
 
@@ -231,11 +252,10 @@ class LoginWindow(tk.Tk):
         try:
             saved = self._load_remember()
             if saved and saved[0] and saved[1]:
-                self._email_var.set(saved[0])
-                self._pass_var.set(saved[1])
-                self._remember_var.set(True)
-                # Auto-login after UI fully renders
-                self.after(500, self._auto_login)
+                self._email_entry.setText(saved[0])
+                self._pass_entry.setText(saved[1])
+                self._remember_cb.setChecked(True)
+                QTimer.singleShot(500, self._auto_login)
                 return
         except Exception:
             pass
@@ -246,23 +266,23 @@ class LoginWindow(tk.Tk):
                 data = json.load(fh)
                 email = data.get("email", "")
                 if email:
-                    self._email_var.set(email)
-                    self._pass_entry.focus_set()
+                    self._email_entry.setText(email)
+                    self._pass_entry.setFocus()
                     return
         except Exception:
             pass
-        self._email_entry.focus_set()
+        self._email_entry.setFocus()
 
     def _auto_login(self):
-        """Attempt auto-login with saved credentials. Falls back to manual on failure."""
+        """Attempt auto-login with saved credentials."""
         try:
-            self._loading_var.set("Conectando automaticamente...")
+            self._loading_lbl.setText("Conectando automaticamente...")
             self._on_login()
         except Exception:
-            self._loading_var.set("")
+            self._loading_lbl.setText("")
             self._clear_remember()
-            self._pass_var.set("")
-            self._pass_entry.focus_set()
+            self._pass_entry.clear()
+            self._pass_entry.setFocus()
 
     def _save_last_email(self, email: str):
         os.makedirs(_APP_DATA_DIR, exist_ok=True)
@@ -278,20 +298,21 @@ class LoginWindow(tk.Tk):
 
     def _set_loading(self, loading: bool):
         if loading:
-            self._loading_var.set("Autenticando...")
-            self._login_btn.config(state="disabled")
+            self._loading_lbl.setText("Autenticando...")
+            self._login_btn.setEnabled(False)
         else:
-            self._loading_var.set("")
-            self._login_btn.config(state="normal")
+            self._loading_lbl.setText("")
+            self._login_btn.setEnabled(True)
 
     def _show_error(self, msg: str):
-        self._error_var.set(msg)
+        self._error_lbl.setText(msg)
 
+    @Slot()
     def _on_login(self):
         if self._login_in_progress:
             return
-        email = self._email_var.get().strip()
-        password = self._pass_var.get().strip()
+        email = self._email_entry.text().strip()
+        password = self._pass_entry.text().strip()
         if not email or not password:
             self._show_error("Preencha e-mail e senha.")
             return
@@ -308,7 +329,9 @@ class LoginWindow(tk.Tk):
                 session = auth.login(email, password)
 
                 if session is None:
-                    self.after(0, lambda: self._login_failed("Sessao nao retornada. Verifique suas credenciais."))
+                    self._sig_login_failed.emit(
+                        "Sessao nao retornada. Verifique suas credenciais."
+                    )
                     return
 
                 # Check license
@@ -324,18 +347,20 @@ class LoginWindow(tk.Tk):
                 except Exception:
                     pass
 
-                self.after(0, lambda: self._login_success(auth, session, license_info, email, is_active))
+                self._sig_login_success.emit(
+                    auth, session, license_info, email, is_active
+                )
             except Exception as exc:
-                self.after(0, lambda: self._login_failed(str(exc)))
+                self._sig_login_failed.emit(str(exc))
 
         t = threading.Thread(target=_do, daemon=True)
         t.start()
 
-        # Timeout: if login takes more than 15 seconds, cancel
+        # Timeout: 15 seconds
         def _check_timeout():
             if t.is_alive() and self._login_in_progress:
                 self._login_failed("Tempo esgotado. Verifique sua conexao.")
-        self.after(15000, _check_timeout)
+        QTimer.singleShot(15000, _check_timeout)
 
     def _login_success(self, auth, session, license_info, email, is_active):
         self._login_in_progress = False
@@ -346,13 +371,12 @@ class LoginWindow(tk.Tk):
             self._show_error(
                 "Sua licenca nao esta ativa. Entre em contato com um administrador."
             )
-            # Clear saved credentials if license is inactive
             self._clear_remember()
             return
 
         # Save or clear "remember me"
-        if self._remember_var.get():
-            self._save_remember(email, self._pass_var.get().strip())
+        if self._remember_cb.isChecked():
+            self._save_remember(email, self._pass_entry.text().strip())
         else:
             self._clear_remember()
 
@@ -361,7 +385,7 @@ class LoginWindow(tk.Tk):
         self.session = session
         self.license_info = license_info
         self._authenticated = True
-        self.destroy()
+        self.accept()
 
     def _login_failed(self, msg: str):
         self._login_in_progress = False
@@ -372,8 +396,8 @@ class LoginWindow(tk.Tk):
     def _on_register(self):
         if self._login_in_progress:
             return
-        email = self._email_var.get().strip()
-        password = self._pass_var.get().strip()
+        email = self._email_entry.text().strip()
+        password = self._pass_entry.text().strip()
         if not email or not password:
             self._show_error("Preencha e-mail e senha para registrar.")
             return
@@ -388,9 +412,9 @@ class LoginWindow(tk.Tk):
 
                 auth = SupabaseAuth()
                 auth.register(email, password)
-                self.after(0, lambda: self._register_done(email))
+                self._sig_register_done.emit(email)
             except Exception as exc:
-                self.after(0, lambda: self._register_failed(str(exc)))
+                self._sig_register_failed.emit(str(exc))
 
         t = threading.Thread(target=_do, daemon=True)
         t.start()
@@ -399,7 +423,7 @@ class LoginWindow(tk.Tk):
         def _check_timeout():
             if t.is_alive() and self._login_in_progress:
                 self._register_failed("Tempo esgotado. Verifique sua conexao.")
-        self.after(15000, _check_timeout)
+        QTimer.singleShot(15000, _check_timeout)
 
     def _register_failed(self, msg: str):
         self._login_in_progress = False
@@ -411,10 +435,10 @@ class LoginWindow(tk.Tk):
         self._set_loading(False)
         self._save_last_email(email)
         self._show_error("")
-        messagebox.showinfo(
+        QMessageBox.information(
+            self,
             "Registro",
             "Conta criada com sucesso!\nVerifique seu e-mail e faca login.",
-            parent=self,
         )
 
     # ------------------------------------------------------------------

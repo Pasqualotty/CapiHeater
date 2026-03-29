@@ -2,158 +2,113 @@
 AdminTab - Painel administrativo para moderadores/admins (dark themed, PT-BR).
 """
 
-import tkinter as tk
-from tkinter import ttk, messagebox, simpledialog
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import (
+    QButtonGroup,
+    QHBoxLayout,
+    QHeaderView,
+    QInputDialog,
+    QLabel,
+    QMessageBox,
+    QPushButton,
+    QRadioButton,
+    QTableWidget,
+    QTableWidgetItem,
+    QVBoxLayout,
+    QWidget,
+)
 
-# Theme colours (same as login window)
-BG = "#1a1a2e"
-FG = "#ffffff"
-ACCENT = "#0f3460"
-ENTRY_BG = "#16213e"
 
-
-class AdminTab(tk.Frame):
-    """Frame meant to be added as a tab in a ttk.Notebook (or packed directly).
+class AdminTab(QWidget):
+    """Admin panel for managing user access.
 
     Parameters
     ----------
-    parent : tk widget
-        Parent container.
     auth : SupabaseAuth
         Authenticated instance.
     session :
         Current Supabase session.
     """
 
-    def __init__(self, parent, auth, session, **kwargs):
-        super().__init__(parent, bg=BG, **kwargs)
+    def __init__(self, auth, session, parent=None):
+        super().__init__(parent)
         self.auth = auth
         self.session = session
-        self._current_filter = "Todos"
+        self._all_users: list[dict] = []
 
-        self._build_toolbar()
-        self._build_table()
-        self._build_filters()
+        self._build_ui()
         self.refresh()
 
     # ------------------------------------------------------------------
     # UI construction
     # ------------------------------------------------------------------
 
-    def _build_toolbar(self):
-        toolbar = tk.Frame(self, bg=BG)
-        toolbar.pack(fill="x", padx=10, pady=(10, 4))
+    def _build_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(6)
 
-        tk.Label(
-            toolbar,
-            text="Gerenciamento de Usuarios",
-            font=("Segoe UI", 13, "bold"),
-            bg=BG,
-            fg=FG,
-        ).pack(side="left")
+        # Toolbar
+        toolbar = QHBoxLayout()
+        toolbar.setSpacing(6)
 
-        # Buttons (right side)
-        btn_kw = dict(
-            font=("Segoe UI", 9, "bold"),
-            bg=ACCENT,
-            fg=FG,
-            activebackground="#1a5276",
-            activeforeground=FG,
-            relief="flat",
-            cursor="hand2",
-            padx=10,
-            pady=4,
+        title_lbl = QLabel("Gerenciamento de Usuarios")
+        title_lbl.setStyleSheet("font-size: 13pt; font-weight: bold;")
+        toolbar.addWidget(title_lbl)
+        toolbar.addStretch()
+
+        self._grant_btn = QPushButton("Liberar Acesso")
+        self._grant_btn.setObjectName("accent")
+        self._grant_btn.clicked.connect(self._on_grant)
+        toolbar.addWidget(self._grant_btn)
+
+        self._revoke_btn = QPushButton("Revogar Acesso")
+        self._revoke_btn.setObjectName("danger")
+        self._revoke_btn.clicked.connect(self._on_revoke)
+        toolbar.addWidget(self._revoke_btn)
+
+        self._refresh_btn = QPushButton("Atualizar")
+        self._refresh_btn.clicked.connect(self.refresh)
+        toolbar.addWidget(self._refresh_btn)
+
+        layout.addLayout(toolbar)
+
+        # Table
+        self._table = QTableWidget()
+        self._table.setColumnCount(6)
+        self._table.setHorizontalHeaderLabels(
+            ["E-mail", "Papel", "Status", "Ativado em", "Liberado por", "Motivo"]
         )
+        self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self._table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
+        self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self._table.setAlternatingRowColors(True)
+        self._table.verticalHeader().setVisible(False)
 
-        self._refresh_btn = tk.Button(
-            toolbar, text="Atualizar", command=self.refresh, **btn_kw
-        )
-        self._refresh_btn.pack(side="right", padx=(6, 0))
+        header = self._table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        for col in range(1, 6):
+            header.setSectionResizeMode(col, QHeaderView.ResizeMode.ResizeToContents)
 
-        self._revoke_btn = tk.Button(
-            toolbar, text="Revogar Acesso", command=self._on_revoke, **btn_kw
-        )
-        self._revoke_btn.pack(side="right", padx=(6, 0))
+        layout.addWidget(self._table)
 
-        self._grant_btn = tk.Button(
-            toolbar, text="Liberar Acesso", command=self._on_grant, **btn_kw
-        )
-        self._grant_btn.pack(side="right", padx=(6, 0))
+        # Filters row
+        filter_layout = QHBoxLayout()
+        filter_layout.setSpacing(6)
+        filter_layout.addWidget(QLabel("Filtro:"))
 
-    def _build_table(self):
-        columns = ("email", "role", "status", "activated_at", "granted_by", "grant_reason")
-        col_headings = {
-            "email": "E-mail",
-            "role": "Papel",
-            "status": "Status",
-            "activated_at": "Ativado em",
-            "granted_by": "Liberado por",
-            "grant_reason": "Motivo",
-        }
+        self._filter_group = QButtonGroup(self)
+        self._filter_group.buttonClicked.connect(self._apply_filter)
 
-        style = ttk.Style()
-        style.theme_use("clam")
-        style.configure(
-            "Admin.Treeview",
-            background=ENTRY_BG,
-            foreground=FG,
-            fieldbackground=ENTRY_BG,
-            rowheight=26,
-            font=("Segoe UI", 9),
-        )
-        style.configure(
-            "Admin.Treeview.Heading",
-            background=ACCENT,
-            foreground=FG,
-            font=("Segoe UI", 9, "bold"),
-        )
-        style.map("Admin.Treeview", background=[("selected", ACCENT)])
-
-        container = tk.Frame(self, bg=BG)
-        container.pack(fill="both", expand=True, padx=10, pady=6)
-
-        self._tree = ttk.Treeview(
-            container,
-            columns=columns,
-            show="headings",
-            style="Admin.Treeview",
-            selectmode="browse",
-        )
-        for col in columns:
-            self._tree.heading(col, text=col_headings[col])
-            width = 170 if col == "email" else 110
-            self._tree.column(col, width=width, anchor="center")
-
-        vsb = ttk.Scrollbar(container, orient="vertical", command=self._tree.yview)
-        self._tree.configure(yscrollcommand=vsb.set)
-
-        self._tree.pack(side="left", fill="both", expand=True)
-        vsb.pack(side="right", fill="y")
-
-    def _build_filters(self):
-        fbar = tk.Frame(self, bg=BG)
-        fbar.pack(fill="x", padx=10, pady=(0, 10))
-
-        tk.Label(fbar, text="Filtro:", font=("Segoe UI", 9), bg=BG, fg=FG).pack(
-            side="left"
-        )
-
-        self._filter_var = tk.StringVar(value="Todos")
         for label in ("Todos", "Ativos", "Inativos", "Liberados Manualmente"):
-            rb = tk.Radiobutton(
-                fbar,
-                text=label,
-                variable=self._filter_var,
-                value=label,
-                font=("Segoe UI", 9),
-                bg=BG,
-                fg=FG,
-                selectcolor=ENTRY_BG,
-                activebackground=BG,
-                activeforeground=FG,
-                command=self._apply_filter,
-            )
-            rb.pack(side="left", padx=6)
+            rb = QRadioButton(label)
+            if label == "Todos":
+                rb.setChecked(True)
+            self._filter_group.addButton(rb)
+            filter_layout.addWidget(rb)
+
+        filter_layout.addStretch()
+        layout.addLayout(filter_layout)
 
     # ------------------------------------------------------------------
     # Data
@@ -161,7 +116,7 @@ class AdminTab(tk.Frame):
 
     def refresh(self):
         """Fetch users from Supabase and populate the table."""
-        self._all_users: list[dict] = []
+        self._all_users = []
         try:
             self._all_users = self.auth.list_users()
         except Exception:
@@ -169,8 +124,10 @@ class AdminTab(tk.Frame):
         self._apply_filter()
 
     def _apply_filter(self):
-        filt = self._filter_var.get()
-        self._tree.delete(*self._tree.get_children())
+        checked = self._filter_group.checkedButton()
+        filt = checked.text() if checked else "Todos"
+
+        self._table.setRowCount(0)
 
         for u in self._all_users:
             is_active = u.get("is_active", False)
@@ -183,69 +140,69 @@ class AdminTab(tk.Frame):
             if filt == "Liberados Manualmente" and not u.get("granted_by"):
                 continue
 
-            self._tree.insert(
-                "",
-                "end",
-                values=(
-                    u.get("email", ""),
-                    u.get("role", "user"),
-                    status,
-                    u.get("activated_at", ""),
-                    u.get("granted_by", ""),
-                    u.get("grant_reason", ""),
-                ),
-            )
+            row = self._table.rowCount()
+            self._table.insertRow(row)
+            values = [
+                u.get("email", ""),
+                u.get("role", "user"),
+                status,
+                u.get("activated_at", ""),
+                u.get("granted_by", ""),
+                u.get("grant_reason", ""),
+            ]
+            for col, val in enumerate(values):
+                item = QTableWidgetItem(str(val))
+                if col > 0:
+                    item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                self._table.setItem(row, col, item)
 
     # ------------------------------------------------------------------
     # Actions
     # ------------------------------------------------------------------
 
     def _on_grant(self):
-        email = simpledialog.askstring(
-            "Liberar Acesso",
-            "Digite o e-mail do usuario:",
-            parent=self,
+        email, ok = QInputDialog.getText(
+            self, "Liberar Acesso", "Digite o e-mail do usuario:"
         )
-        if not email:
+        if not ok or not email:
             return
 
-        reason = simpledialog.askstring(
-            "Motivo",
-            "Motivo da liberacao (opcional):",
-            parent=self,
-        ) or ""
+        reason, _ = QInputDialog.getText(
+            self, "Motivo", "Motivo da liberacao (opcional):"
+        )
 
         try:
             grantor_id = (
                 self.session.user.id if hasattr(self.session, "user") else "unknown"
             )
-            self.auth.grant_access(email, grantor_id, reason)
-            messagebox.showinfo("Sucesso", f"Acesso liberado para {email}.", parent=self)
+            self.auth.grant_access(email, grantor_id, reason or "")
+            QMessageBox.information(self, "Sucesso", f"Acesso liberado para {email}.")
             self.refresh()
         except Exception as exc:
-            messagebox.showerror("Erro", str(exc), parent=self)
+            QMessageBox.critical(self, "Erro", str(exc))
 
     def _on_revoke(self):
-        selected = self._tree.focus()
-        if not selected:
-            messagebox.showwarning(
-                "Selecione", "Selecione um usuario na tabela.", parent=self
-            )
+        row = self._table.currentRow()
+        if row < 0:
+            QMessageBox.warning(self, "Selecione", "Selecione um usuario na tabela.")
             return
 
-        values = self._tree.item(selected, "values")
-        email = values[0] if values else ""
+        email_item = self._table.item(row, 0)
+        email = email_item.text() if email_item else ""
 
-        if not messagebox.askyesno(
+        reply = QMessageBox.question(
+            self,
             "Confirmar",
             f"Deseja revogar o acesso de {email}?",
-            parent=self,
-        ):
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
             return
 
         try:
             self.auth.revoke_access(email)
-            messagebox.showinfo("Sucesso", f"Acesso revogado de {email}.", parent=self)
+            QMessageBox.information(self, "Sucesso", f"Acesso revogado de {email}.")
             self.refresh()
         except Exception as exc:
-            messagebox.showerror("Erro", str(exc), parent=self)
+            QMessageBox.critical(self, "Erro", str(exc))

@@ -4,27 +4,57 @@ AccountsTab - CRUD interface for managing Twitter/X accounts.
 
 import json
 import webbrowser
-import tkinter as tk
-from tkinter import ttk, filedialog, messagebox
 from datetime import date
 
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QShortcut, QKeySequence
+from PySide6.QtWidgets import (
+    QComboBox,
+    QDialog,
+    QFileDialog,
+    QHBoxLayout,
+    QHeaderView,
+    QLabel,
+    QLineEdit,
+    QListWidget,
+    QAbstractItemView,
+    QMenu,
+    QMessageBox,
+    QPlainTextEdit,
+    QPushButton,
+    QTableWidget,
+    QTableWidgetItem,
+    QVBoxLayout,
+    QWidget,
+)
+
+from gui.base import BaseTab
+from gui.theme import (
+    BG_DARK,
+    BG_INPUT,
+    BG_SECONDARY,
+    FG_TEXT,
+    ACCENT_HIGHLIGHT,
+)
 from utils.config import DEFAULT_SCROLL_CONFIG, SCROLL_PRESETS
 
 
-class AccountsTab(ttk.Frame):
-    """Accounts management tab with treeview table and CRUD dialogs.
+class AccountsTab(BaseTab):
+    """Accounts management tab with table and CRUD dialogs.
 
     Parameters
     ----------
-    parent : tk.Widget
-        Parent frame (notebook tab container).
     app : CapiHeaterApp
         Reference to the main application instance.
+    parent : QWidget | None
+        Parent widget.
     """
 
-    def __init__(self, parent, app, **kwargs):
-        super().__init__(parent, style="Tab.TFrame", **kwargs)
-        self.app = app
+    def __init__(self, app, parent=None):
+        super().__init__(app, parent)
+        self._all_accounts: list[dict] = []
+        self._row_map: dict[int, int] = {}          # table-row -> account_id
+        self._username_map: dict[int, str] = {}      # table-row -> username
         self._build_ui()
         self.refresh()
 
@@ -33,133 +63,133 @@ class AccountsTab(ttk.Frame):
     # ==================================================================
 
     def _build_ui(self) -> None:
-        # ---------- Toolbar row 1 ----------
-        toolbar = ttk.Frame(self, style="Dark.TFrame")
-        toolbar.pack(fill=tk.X, padx=12, pady=(12, 2))
+        root_layout = QVBoxLayout(self)
+        root_layout.setContentsMargins(12, 12, 12, 12)
+        root_layout.setSpacing(6)
 
-        ttk.Label(toolbar, text="Gerenciamento de Contas", style="Heading.TLabel").pack(side=tk.LEFT)
+        # ---------- Toolbar ----------
+        toolbar = QHBoxLayout()
+        toolbar.setSpacing(6)
 
-        btn_frame = ttk.Frame(toolbar, style="Dark.TFrame")
-        btn_frame.pack(side=tk.RIGHT)
+        lbl_heading = QLabel("Gerenciamento de Contas")
+        lbl_heading.setStyleSheet("font-size: 13pt; font-weight: bold;")
+        toolbar.addWidget(lbl_heading)
+        toolbar.addStretch()
 
-        ttk.Button(btn_frame, text="Adicionar", style="Accent.TButton", command=self._add_account_dialog).pack(side=tk.LEFT, padx=(0, 6))
-        ttk.Button(btn_frame, text="Editar", style="Accent.TButton", command=self._edit_account_dialog).pack(side=tk.LEFT, padx=(0, 6))
-        ttk.Button(btn_frame, text="Excluir", style="Danger.TButton", command=self._delete_account).pack(side=tk.LEFT, padx=(0, 6))
-        ttk.Button(btn_frame, text="Cookies", style="Accent.TButton", command=self._import_cookies).pack(side=tk.LEFT, padx=(0, 6))
-        ttk.Button(btn_frame, text="Importar Massa", style="Accent.TButton", command=self._bulk_import).pack(side=tk.LEFT, padx=(0, 6))
-        ttk.Button(btn_frame, text="Reiniciar", style="Danger.TButton", command=self._reset_schedule).pack(side=tk.LEFT, padx=(0, 6))
-        ttk.Button(btn_frame, text="Categorias", style="Accent.TButton", command=self._manage_categories).pack(side=tk.LEFT)
+        buttons = [
+            ("Adicionar", "accent", self._add_account_dialog),
+            ("Editar", "accent", self._edit_account_dialog),
+            ("Excluir", "danger", self._delete_account),
+            ("Cookies", "accent", self._import_cookies),
+            ("Importar Massa", "accent", self._bulk_import),
+            ("Reiniciar", "danger", self._reset_schedule),
+            ("Categorias", "accent", self._manage_categories),
+        ]
+        for text, obj_name, slot in buttons:
+            btn = QPushButton(text)
+            btn.setObjectName(obj_name)
+            btn.clicked.connect(slot)
+            toolbar.addWidget(btn)
 
-        # ---------- Search bar ----------
-        search_frame = ttk.Frame(self, style="Dark.TFrame")
-        search_frame.pack(fill=tk.X, padx=12, pady=(0, 4))
+        root_layout.addLayout(toolbar)
 
-        ttk.Label(search_frame, text="Pesquisar:", style="Dark.TLabel").pack(side=tk.LEFT, padx=(0, 6))
-        self._search_var = tk.StringVar()
-        self._search_var.trace_add("write", lambda *_: self._filter_tree())
-        search_entry = ttk.Entry(search_frame, textvariable=self._search_var, style="Dark.TEntry", width=20)
-        search_entry.pack(side=tk.LEFT)
+        # ---------- Search / filter bar ----------
+        search_layout = QHBoxLayout()
+        search_layout.setSpacing(6)
 
-        ttk.Label(search_frame, text="Categoria:", style="Dark.TLabel").pack(side=tk.LEFT, padx=(12, 6))
-        self._cat_filter_var = tk.StringVar(value="Todas")
-        self._cat_filter_combo = ttk.Combobox(
-            search_frame, textvariable=self._cat_filter_var,
-            state="readonly", style="Dark.TCombobox", width=14,
+        search_layout.addWidget(QLabel("Pesquisar:"))
+        self._search_edit = QLineEdit()
+        self._search_edit.setFixedWidth(180)
+        self._search_edit.setPlaceholderText("Filtrar por usuario...")
+        self._search_edit.textChanged.connect(self._filter_table)
+        search_layout.addWidget(self._search_edit)
+
+        search_layout.addWidget(QLabel("Categoria:"))
+        self._cat_filter_combo = QComboBox()
+        self._cat_filter_combo.setFixedWidth(160)
+        self._cat_filter_combo.currentTextChanged.connect(lambda _: self._filter_table())
+        search_layout.addWidget(self._cat_filter_combo)
+
+        btn_clear = QPushButton("Limpar")
+        btn_clear.clicked.connect(self._clear_filters)
+        search_layout.addWidget(btn_clear)
+
+        search_layout.addStretch()
+        root_layout.addLayout(search_layout)
+
+        # ---------- Table ----------
+        self._table = QTableWidget()
+        self._table.setColumnCount(7)
+        self._table.setHorizontalHeaderLabels(
+            ["Usuario", "Status", "Cronograma", "Categoria", "Dia", "Proxy", "Data Inicio"]
         )
-        self._cat_filter_combo.pack(side=tk.LEFT)
-        self._cat_filter_combo.bind("<<ComboboxSelected>>", lambda *_: self._filter_tree())
+        self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self._table.setSelectionMode(QTableWidget.SelectionMode.ExtendedSelection)
+        self._table.setAlternatingRowColors(True)
+        self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self._table.verticalHeader().setVisible(False)
+        self._table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._table.customContextMenuRequested.connect(self._show_context_menu)
+        self._table.doubleClicked.connect(lambda _idx: self._open_profile())
+        self._table.itemSelectionChanged.connect(self._on_selection_changed)
 
-        ttk.Button(search_frame, text="Limpar", command=self._clear_filters).pack(side=tk.LEFT, padx=(6, 0))
+        header = self._table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        for col in range(1, 7):
+            header.setSectionResizeMode(col, QHeaderView.ResizeMode.ResizeToContents)
 
-        # ---------- Treeview ----------
-        tree_frame = ttk.Frame(self, style="Dark.TFrame")
-        tree_frame.pack(fill=tk.BOTH, expand=True, padx=12, pady=(6, 12))
+        root_layout.addWidget(self._table, stretch=1)
 
-        columns = ("username", "status", "schedule", "categoria", "dia", "proxy", "start_date")
-        self._tree = ttk.Treeview(
-            tree_frame,
-            columns=columns,
-            show="headings",
-            style="Dark.Treeview",
-            selectmode="extended",
-        )
+        # ---------- Selection info ----------
+        self._sel_info = QLabel("")
+        root_layout.addWidget(self._sel_info)
 
-        self._tree.heading("username", text="Usuario")
-        self._tree.heading("status", text="Status")
-        self._tree.heading("schedule", text="Cronograma")
-        self._tree.heading("categoria", text="Categoria")
-        self._tree.heading("dia", text="Dia")
-        self._tree.heading("proxy", text="Proxy")
-        self._tree.heading("start_date", text="Data Inicio")
-
-        self._tree.column("username", width=140, anchor=tk.W)
-        self._tree.column("status", width=80, anchor=tk.CENTER)
-        self._tree.column("schedule", width=120, anchor=tk.CENTER)
-        self._tree.column("categoria", width=120, anchor=tk.CENTER)
-        self._tree.column("dia", width=50, anchor=tk.CENTER)
-        self._tree.column("proxy", width=150, anchor=tk.W)
-        self._tree.column("start_date", width=100, anchor=tk.CENTER)
-
-        scrollbar = ttk.Scrollbar(tree_frame, orient=tk.VERTICAL, command=self._tree.yview)
-        self._tree.configure(yscrollcommand=scrollbar.set)
-        self._tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-
-        # Store mapping iid -> account_id
-        self._row_map: dict[str, int] = {}
-
-        # Bindings
-        self._tree.bind("<Control-a>", self._select_all)
-        self._tree.bind("<Button-3>", self._show_context_menu)
-        self._tree.bind("<Double-1>", lambda _e: self._open_profile())
-        self._tree.bind("<<TreeviewSelect>>", self._on_selection_changed)
-
-        # Selection info
-        sel_frame = ttk.Frame(self, style="Dark.TFrame")
-        sel_frame.pack(fill=tk.X, padx=12, pady=(0, 6))
-        self._sel_info = tk.StringVar(value="")
-        ttk.Label(sel_frame, textvariable=self._sel_info, style="Dark.TLabel").pack(side=tk.LEFT)
+        # ---------- Shortcuts (stored to prevent GC) ----------
+        self._shortcut_select_all = QShortcut(QKeySequence("Ctrl+A"), self._table)
+        self._shortcut_select_all.activated.connect(self._select_all)
 
     # ==================================================================
     # Selection helpers
     # ==================================================================
 
-    def _select_all(self, _event=None):
-        self._tree.selection_set(self._tree.get_children())
+    def _select_all(self):
+        self._table.selectAll()
 
-    def _on_selection_changed(self, _event=None):
-        count = len(self._tree.selection())
+    def _on_selection_changed(self):
+        count = len(self._table.selectionModel().selectedRows())
         if count == 0:
-            self._sel_info.set("")
+            self._sel_info.setText("")
         elif count == 1:
-            self._sel_info.set("1 conta selecionada")
+            self._sel_info.setText("1 conta selecionada")
         else:
-            self._sel_info.set(f"{count} contas selecionadas")
+            self._sel_info.setText(f"{count} contas selecionadas")
 
-    def _show_context_menu(self, event):
-        iid = self._tree.identify_row(event.y)
-        if iid and iid not in self._tree.selection():
-            self._tree.selection_set(iid)
+    def _show_context_menu(self, pos):
+        index = self._table.indexAt(pos)
+        if index.isValid():
+            row = index.row()
+            if row not in [idx.row() for idx in self._table.selectionModel().selectedRows()]:
+                self._table.selectRow(row)
 
-        menu = tk.Menu(self, tearoff=0, bg="#16213e", fg="#e0e0e0", activebackground="#0f3460")
-        menu.add_command(label="Abrir Perfil", command=self._open_profile)
-        menu.add_separator()
-        menu.add_command(label="Editar", command=self._edit_account_dialog)
-        menu.add_command(label="Importar Cookies", command=self._import_cookies)
-        menu.add_command(label="Alternar Ativo", command=self._toggle_active)
-        menu.add_separator()
-        menu.add_command(label="Reiniciar Cronograma", command=self._reset_schedule)
-        menu.add_command(label="Excluir Selecionados", command=self._delete_account)
-        menu.add_separator()
-        menu.add_command(label="Selecionar Todos", command=self._select_all)
-        menu.tk_popup(event.x_root, event.y_root)
+        menu = QMenu(self)
+        menu.addAction("Abrir Perfil", self._open_profile)
+        menu.addSeparator()
+        menu.addAction("Editar", self._edit_account_dialog)
+        menu.addAction("Importar Cookies", self._import_cookies)
+        menu.addAction("Alternar Ativo", self._toggle_active)
+        menu.addSeparator()
+        menu.addAction("Reiniciar Cronograma", self._reset_schedule)
+        menu.addAction("Excluir Selecionados", self._delete_account)
+        menu.addSeparator()
+        menu.addAction("Selecionar Todos", self._select_all)
+        menu.exec(self._table.viewport().mapToGlobal(pos))
 
     # ==================================================================
     # Data
     # ==================================================================
 
     def refresh(self) -> None:
-        """Reload accounts from the database into the treeview."""
+        """Reload accounts from the database into the table."""
         accounts = self.app.account_manager.get_all_accounts()
         schedules = self._get_schedule_names()
         cat_mgr = self.app.category_manager
@@ -168,9 +198,9 @@ class AccountsTab(ttk.Frame):
         for acc in accounts:
             sched_name = schedules.get(acc.get("schedule_id", 1), "Padrao")
             status_label = self._status_label(acc.get("status", "idle"))
-            proxy = acc.get("proxy") or "—"
+            proxy = acc.get("proxy") or "\u2014"
             cat_names = cat_mgr.get_account_category_names(acc["id"])
-            cat_label = ", ".join(cat_names) if cat_names else "—"
+            cat_label = ", ".join(cat_names) if cat_names else "\u2014"
             self._all_accounts.append({
                 "id": acc["id"],
                 "username": acc.get("username", "???"),
@@ -180,7 +210,7 @@ class AccountsTab(ttk.Frame):
                     status_label,
                     sched_name,
                     cat_label,
-                    acc.get("current_day", 1),
+                    str(acc.get("current_day", 1)),
                     proxy,
                     acc.get("start_date", ""),
                 ),
@@ -188,26 +218,31 @@ class AccountsTab(ttk.Frame):
 
         # Update category filter combo
         all_cats = sorted({n for item in self._all_accounts for n in item["cat_names"]})
-        self._cat_filter_combo["values"] = ["Todas", "Sem categoria"] + all_cats
-        if self._cat_filter_var.get() not in self._cat_filter_combo["values"]:
-            self._cat_filter_var.set("Todas")
+        current_filter = self._cat_filter_combo.currentText()
+        self._cat_filter_combo.blockSignals(True)
+        self._cat_filter_combo.clear()
+        self._cat_filter_combo.addItems(["Todas", "Sem categoria"] + all_cats)
+        idx = self._cat_filter_combo.findText(current_filter)
+        self._cat_filter_combo.setCurrentIndex(idx if idx >= 0 else 0)
+        self._cat_filter_combo.blockSignals(False)
 
-        self._filter_tree()
+        self._filter_table()
 
     def _clear_filters(self):
-        self._search_var.set("")
-        self._cat_filter_var.set("Todas")
+        self._search_edit.clear()
+        self._cat_filter_combo.setCurrentIndex(0)
 
-    def _filter_tree(self) -> None:
-        """Apply search and category filters and repopulate the treeview."""
-        self._tree.delete(*self._tree.get_children())
+    def _filter_table(self) -> None:
+        """Apply search and category filters and repopulate the table."""
+        self._table.setRowCount(0)
         self._row_map.clear()
-        self._username_map: dict[str, str] = {}
+        self._username_map.clear()
 
-        query = self._search_var.get().strip().lower()
-        cat_filter = self._cat_filter_var.get()
+        query = self._search_edit.text().strip().lower()
+        cat_filter = self._cat_filter_combo.currentText()
 
-        for item in getattr(self, "_all_accounts", []):
+        row = 0
+        for item in self._all_accounts:
             display_name = item["values"][0].lower()
             if query and query not in display_name:
                 continue
@@ -215,9 +250,19 @@ class AccountsTab(ttk.Frame):
                 continue
             if cat_filter not in ("Todas", "Sem categoria") and cat_filter not in item["cat_names"]:
                 continue
-            iid = self._tree.insert("", tk.END, values=item["values"])
-            self._row_map[iid] = item["id"]
-            self._username_map[iid] = item["username"]
+
+            self._table.insertRow(row)
+            for col, val in enumerate(item["values"]):
+                cell = QTableWidgetItem(str(val))
+                if col == 0:
+                    cell.setData(Qt.ItemDataRole.UserRole, item["id"])
+                if col in (1, 2, 3, 4, 6):
+                    cell.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                self._table.setItem(row, col, cell)
+
+            self._row_map[row] = item["id"]
+            self._username_map[row] = item["username"]
+            row += 1
 
     def _get_schedule_names(self) -> dict[int, str]:
         rows = self.app.db.fetch_all("SELECT id, name FROM schedules ORDER BY id")
@@ -225,8 +270,8 @@ class AccountsTab(ttk.Frame):
 
     def _get_selected_ids(self) -> list[int]:
         """Return list of selected account IDs."""
-        sel = self._tree.selection()
-        return [self._row_map[iid] for iid in sel if iid in self._row_map]
+        selected_rows = {idx.row() for idx in self._table.selectionModel().selectedRows()}
+        return [self._row_map[r] for r in selected_rows if r in self._row_map]
 
     def _get_selected_id(self) -> int | None:
         """Return a single selected ID (for single-item actions like edit)."""
@@ -243,7 +288,7 @@ class AccountsTab(ttk.Frame):
     def _edit_account_dialog(self) -> None:
         ids = self._get_selected_ids()
         if not ids:
-            messagebox.showwarning("Aviso", "Selecione uma ou mais contas para editar.", parent=self)
+            QMessageBox.warning(self, "Aviso", "Selecione uma ou mais contas para editar.")
             return
         if len(ids) == 1:
             account = self.app.account_manager.get_account(ids[0])
@@ -254,96 +299,98 @@ class AccountsTab(ttk.Frame):
             self._open_bulk_edit_form(ids)
 
     def _open_account_form(self, title: str, account: dict | None) -> None:
-        dlg = tk.Toplevel(self)
-        dlg.title(title)
-        dlg.geometry("460x580")
-        dlg.configure(bg="#1a1a2e")
-        dlg.resizable(False, False)
-        dlg.grab_set()
+        dlg = QDialog(self)
+        dlg.setWindowTitle(title)
+        dlg.setFixedSize(460, 580)
+        dlg.setModal(True)
 
-        pad = {"padx": 12, "pady": 4}
+        layout = QVBoxLayout(dlg)
+        layout.setSpacing(6)
+        layout.setContentsMargins(12, 12, 12, 12)
 
         # Username
-        ttk.Label(dlg, text="Usuario (sem @):", style="Dark.TLabel").pack(anchor=tk.W, **pad)
-        ent_user = ttk.Entry(dlg, style="Dark.TEntry", width=40)
-        ent_user.pack(**pad)
+        layout.addWidget(QLabel("Usuario (sem @):"))
+        ent_user = QLineEdit()
         if account:
-            ent_user.insert(0, account.get("username", ""))
+            ent_user.setText(account.get("username", ""))
+        layout.addWidget(ent_user)
 
         # Cookies file
-        ttk.Label(dlg, text="Arquivo de Cookies (.json / .txt):", style="Dark.TLabel").pack(anchor=tk.W, **pad)
-        cookie_frame = ttk.Frame(dlg, style="Dark.TFrame")
-        cookie_frame.pack(fill=tk.X, **pad)
-
-        cookie_var = tk.StringVar()
-        ent_cookie = ttk.Entry(cookie_frame, textvariable=cookie_var, style="Dark.TEntry", width=32)
-        ent_cookie.pack(side=tk.LEFT, padx=(0, 4))
+        layout.addWidget(QLabel("Arquivo de Cookies (.json / .txt):"))
+        cookie_row = QHBoxLayout()
+        ent_cookie = QLineEdit()
+        cookie_row.addWidget(ent_cookie)
 
         def browse_cookies():
-            path = filedialog.askopenfilename(
-                title="Selecionar arquivo de cookies",
-                filetypes=[("JSON", "*.json"), ("Netscape TXT", "*.txt"), ("Todos", "*.*")],
-                parent=dlg,
+            path, _ = QFileDialog.getOpenFileName(
+                dlg,
+                "Selecionar arquivo de cookies",
+                "",
+                "JSON (*.json);;Netscape TXT (*.txt);;Todos (*.*)",
             )
             if path:
-                cookie_var.set(path)
+                ent_cookie.setText(path)
 
-        ttk.Button(cookie_frame, text="Procurar...", command=browse_cookies).pack(side=tk.LEFT)
+        btn_browse = QPushButton("Procurar...")
+        btn_browse.clicked.connect(browse_cookies)
+        cookie_row.addWidget(btn_browse)
+        layout.addLayout(cookie_row)
 
         # Proxy
-        ttk.Label(dlg, text="Proxy (opcional):", style="Dark.TLabel").pack(anchor=tk.W, **pad)
-        ent_proxy = ttk.Entry(dlg, style="Dark.TEntry", width=40)
-        ent_proxy.pack(**pad)
+        layout.addWidget(QLabel("Proxy (opcional):"))
+        ent_proxy = QLineEdit()
         if account and account.get("proxy"):
-            ent_proxy.insert(0, account["proxy"])
+            ent_proxy.setText(account["proxy"])
+        layout.addWidget(ent_proxy)
 
         # Schedule dropdown
-        ttk.Label(dlg, text="Cronograma:", style="Dark.TLabel").pack(anchor=tk.W, **pad)
+        layout.addWidget(QLabel("Cronograma:"))
         schedule_names = self._get_schedule_names()
         schedule_list = list(schedule_names.values()) or ["Padrao"]
         schedule_ids = list(schedule_names.keys()) or [1]
-        combo_sched = ttk.Combobox(dlg, values=schedule_list, state="readonly", style="Dark.TCombobox", width=37)
-        combo_sched.pack(**pad)
+        combo_sched = QComboBox()
+        combo_sched.addItems(schedule_list)
         if account:
-            idx = schedule_ids.index(account.get("schedule_id", 1)) if account.get("schedule_id", 1) in schedule_ids else 0
-            combo_sched.current(idx)
+            sid = account.get("schedule_id", 1)
+            idx = schedule_ids.index(sid) if sid in schedule_ids else 0
+            combo_sched.setCurrentIndex(idx)
         elif schedule_list:
-            combo_sched.current(0)
+            combo_sched.setCurrentIndex(0)
+        layout.addWidget(combo_sched)
 
-        # Categories (multi-select listbox)
-        ttk.Label(dlg, text="Categorias (Ctrl+clique para multiplas):", style="Dark.TLabel").pack(anchor=tk.W, **pad)
+        # Categories (multi-select list)
+        layout.addWidget(QLabel("Categorias (Ctrl+clique para multiplas):"))
         cat_names = self.app.category_manager.get_category_names()
         cat_list = list(cat_names.values())
         cat_ids = list(cat_names.keys())
 
-        cat_listbox = tk.Listbox(
-            dlg, selectmode=tk.MULTIPLE, height=4, width=40,
-            bg="#0d1b2a", fg="#e0e0e0", selectbackground="#1a73e8",
-            relief="flat", highlightthickness=0,
-        )
-        cat_listbox.pack(**pad)
-        for name in cat_list:
-            cat_listbox.insert(tk.END, name)
+        cat_listwidget = QListWidget()
+        cat_listwidget.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        cat_listwidget.setMaximumHeight(90)
+        cat_listwidget.addItems(cat_list)
 
         # Pre-select existing categories
         if account:
             existing_cats = set(self.app.category_manager.get_account_categories(account["id"]))
             for i, cid in enumerate(cat_ids):
                 if cid in existing_cats:
-                    cat_listbox.selection_set(i)
+                    cat_listwidget.item(i).setSelected(True)
 
-        # Scroll config (per-account override)
-        ttk.Label(dlg, text="Perfil de rolagem:", style="Dark.TLabel").pack(anchor=tk.W, **pad)
+        layout.addWidget(cat_listwidget)
+
+        # Scroll config
+        layout.addWidget(QLabel("Perfil de rolagem:"))
         scroll_preset_names = ["Padrao Global", "Lento", "Normal", "Rapido"]
-        combo_scroll = ttk.Combobox(
-            dlg, values=scroll_preset_names, state="readonly",
-            style="Dark.TCombobox", width=37,
-        )
-        combo_scroll.pack(**pad)
-        # Determine current preset for this account
+        combo_scroll = QComboBox()
+        combo_scroll.addItems(scroll_preset_names)
+
         if account and account.get("scroll_config"):
             try:
-                acct_cfg = json.loads(account["scroll_config"]) if isinstance(account["scroll_config"], str) else account["scroll_config"]
+                acct_cfg = (
+                    json.loads(account["scroll_config"])
+                    if isinstance(account["scroll_config"], str)
+                    else account["scroll_config"]
+                )
             except (json.JSONDecodeError, TypeError):
                 acct_cfg = None
             matched = False
@@ -351,54 +398,54 @@ class AccountsTab(ttk.Frame):
                 for pname, pdata in SCROLL_PRESETS.items():
                     ref = pdata if pdata else DEFAULT_SCROLL_CONFIG
                     if acct_cfg == ref:
-                        combo_scroll.set(pname)
+                        combo_scroll.setCurrentText(pname)
                         matched = True
                         break
                 if not matched:
-                    # Check if it matches Normal (DEFAULT_SCROLL_CONFIG)
                     if acct_cfg == DEFAULT_SCROLL_CONFIG:
-                        combo_scroll.set("Normal")
+                        combo_scroll.setCurrentText("Normal")
                     else:
-                        scroll_preset_names.append("Personalizado")
-                        combo_scroll["values"] = scroll_preset_names
-                        combo_scroll.set("Personalizado")
+                        combo_scroll.addItem("Personalizado")
+                        combo_scroll.setCurrentText("Personalizado")
             else:
-                combo_scroll.set("Padrao Global")
+                combo_scroll.setCurrentText("Padrao Global")
         else:
-            combo_scroll.set("Padrao Global")
+            combo_scroll.setCurrentText("Padrao Global")
+
+        layout.addWidget(combo_scroll)
 
         # Notes
-        ttk.Label(dlg, text="Notas:", style="Dark.TLabel").pack(anchor=tk.W, **pad)
-        txt_notes = tk.Text(dlg, height=3, width=40, bg="#0d1b2a", fg="#e0e0e0", insertbackground="#e0e0e0", relief="flat")
-        txt_notes.pack(**pad)
+        layout.addWidget(QLabel("Notas:"))
+        txt_notes = QPlainTextEdit()
+        txt_notes.setMaximumHeight(72)
         if account and account.get("notes"):
-            txt_notes.insert("1.0", account["notes"])
+            txt_notes.setPlainText(account["notes"])
+        layout.addWidget(txt_notes)
 
         # Save button
         def save():
-            username = ent_user.get().strip().lstrip("@")
+            username = ent_user.text().strip().lstrip("@")
             if not username:
-                messagebox.showerror("Erro", "O nome de usuario e obrigatorio.", parent=dlg)
+                QMessageBox.critical(dlg, "Erro", "O nome de usuario e obrigatorio.")
                 return
 
-            proxy = ent_proxy.get().strip() or None
-            sched_idx = combo_sched.current()
+            proxy = ent_proxy.text().strip() or None
+            sched_idx = combo_sched.currentIndex()
             sched_id = schedule_ids[sched_idx] if sched_idx >= 0 else 1
-            notes = txt_notes.get("1.0", tk.END).strip()
+            notes = txt_notes.toPlainText().strip()
 
             # Resolve scroll config from preset selection
-            scroll_choice = combo_scroll.get()
+            scroll_choice = combo_scroll.currentText()
             if scroll_choice == "Padrao Global":
                 scroll_config_json = None
             elif scroll_choice == "Personalizado":
-                # Keep existing custom config unchanged
                 scroll_config_json = account.get("scroll_config") if account else None
             else:
                 preset_data = SCROLL_PRESETS.get(scroll_choice)
                 scroll_config_json = json.dumps(preset_data if preset_data else DEFAULT_SCROLL_CONFIG)
 
             # Get selected categories
-            selected_cat_ids = [cat_ids[i] for i in cat_listbox.curselection()]
+            selected_cat_ids = [cat_ids[i] for i in range(cat_listwidget.count()) if cat_listwidget.item(i).isSelected()]
 
             if account:
                 # Edit mode
@@ -409,7 +456,7 @@ class AccountsTab(ttk.Frame):
                     "scroll_config": scroll_config_json,
                     "notes": notes,
                 }
-                cookie_path = cookie_var.get().strip()
+                cookie_path = ent_cookie.text().strip()
                 if cookie_path:
                     cookies = self._load_cookies(cookie_path)
                     if cookies is not None:
@@ -419,13 +466,13 @@ class AccountsTab(ttk.Frame):
                 self.app.set_status(f"Conta @{username} atualizada")
             else:
                 # Add mode
-                cookie_path = cookie_var.get().strip()
+                cookie_path = ent_cookie.text().strip()
                 if not cookie_path:
-                    messagebox.showerror("Erro", "Selecione o arquivo de cookies.", parent=dlg)
+                    QMessageBox.critical(dlg, "Erro", "Selecione o arquivo de cookies.")
                     return
                 cookies = self._load_cookies(cookie_path)
                 if cookies is None:
-                    messagebox.showerror("Erro", "Falha ao carregar cookies.", parent=dlg)
+                    QMessageBox.critical(dlg, "Erro", "Falha ao carregar cookies.")
                     return
                 new_id = self.app.account_manager.add_account(
                     username=username,
@@ -441,10 +488,16 @@ class AccountsTab(ttk.Frame):
                     self.app.category_manager.set_account_categories(new_id, selected_cat_ids)
                 self.app.set_status(f"Conta @{username} adicionada")
 
-            dlg.destroy()
+            dlg.accept()
             self.refresh()
 
-        ttk.Button(dlg, text="Salvar", style="Accent.TButton", command=save).pack(pady=12)
+        layout.addStretch()
+        btn_save = QPushButton("Salvar")
+        btn_save.setObjectName("accent")
+        btn_save.clicked.connect(save)
+        layout.addWidget(btn_save)
+
+        dlg.exec()
 
     # ==================================================================
     # Bulk edit
@@ -453,90 +506,85 @@ class AccountsTab(ttk.Frame):
     def _open_bulk_edit_form(self, account_ids: list[int]) -> None:
         """Edit shared fields across multiple accounts at once."""
         count = len(account_ids)
-        dlg = tk.Toplevel(self)
-        dlg.title(f"Editar {count} Contas")
-        dlg.geometry("460x480")
-        dlg.configure(bg="#1a1a2e")
-        dlg.resizable(False, False)
-        dlg.grab_set()
+        dlg = QDialog(self)
+        dlg.setWindowTitle(f"Editar {count} Contas")
+        dlg.setFixedSize(460, 480)
+        dlg.setModal(True)
 
-        pad = {"padx": 12, "pady": 4}
-        bg = "#1a1a2e"
+        layout = QVBoxLayout(dlg)
+        layout.setSpacing(6)
+        layout.setContentsMargins(12, 12, 12, 12)
 
-        ttk.Label(
-            dlg,
-            text=f"Editando {count} contas simultaneamente",
-            style="Heading.TLabel",
-        ).pack(anchor=tk.W, padx=12, pady=(12, 4))
+        lbl_heading = QLabel(f"Editando {count} contas simultaneamente")
+        lbl_heading.setStyleSheet("font-size: 13pt; font-weight: bold;")
+        layout.addWidget(lbl_heading)
 
-        ttk.Label(
-            dlg,
-            text="Apenas os campos alterados serao aplicados.\n"
-                 "Deixe em branco ou no padrao para nao alterar.",
-            style="Dark.TLabel",
-        ).pack(anchor=tk.W, padx=12, pady=(0, 8))
+        layout.addWidget(QLabel(
+            "Apenas os campos alterados serao aplicados.\n"
+            "Deixe em branco ou no padrao para nao alterar."
+        ))
 
         # Proxy
-        ttk.Label(dlg, text="Proxy (deixe vazio para nao alterar):", style="Dark.TLabel").pack(anchor=tk.W, **pad)
-        ent_proxy = ttk.Entry(dlg, style="Dark.TEntry", width=40)
-        ent_proxy.pack(**pad)
+        layout.addWidget(QLabel("Proxy (deixe vazio para nao alterar):"))
+        ent_proxy = QLineEdit()
+        layout.addWidget(ent_proxy)
 
         # Schedule
-        ttk.Label(dlg, text="Cronograma:", style="Dark.TLabel").pack(anchor=tk.W, **pad)
+        layout.addWidget(QLabel("Cronograma:"))
         schedule_names = self._get_schedule_names()
-        schedule_list = ["— Nao alterar —"] + list(schedule_names.values())
-        schedule_ids = [None] + list(schedule_names.keys())
-        combo_sched = ttk.Combobox(dlg, values=schedule_list, state="readonly", style="Dark.TCombobox", width=37)
-        combo_sched.pack(**pad)
-        combo_sched.current(0)
+        schedule_list = ["\u2014 Nao alterar \u2014"] + list(schedule_names.values())
+        schedule_ids: list[int | None] = [None] + list(schedule_names.keys())
+        combo_sched = QComboBox()
+        combo_sched.addItems(schedule_list)
+        combo_sched.setCurrentIndex(0)
+        layout.addWidget(combo_sched)
 
         # Categories
-        ttk.Label(dlg, text="Categorias (selecione para SUBSTITUIR, vazio = nao alterar):", style="Dark.TLabel").pack(anchor=tk.W, **pad)
+        layout.addWidget(QLabel("Categorias (selecione para SUBSTITUIR, vazio = nao alterar):"))
         cat_names = self.app.category_manager.get_category_names()
         cat_list = list(cat_names.values())
         cat_ids = list(cat_names.keys())
 
-        cat_listbox = tk.Listbox(
-            dlg, selectmode=tk.MULTIPLE, height=4, width=40,
-            bg="#0d1b2a", fg="#e0e0e0", selectbackground="#1a73e8",
-            relief="flat", highlightthickness=0,
-        )
-        cat_listbox.pack(**pad)
-        for name in cat_list:
-            cat_listbox.insert(tk.END, name)
+        cat_listwidget = QListWidget()
+        cat_listwidget.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        cat_listwidget.setMaximumHeight(90)
+        cat_listwidget.addItems(cat_list)
+        layout.addWidget(cat_listwidget)
 
         # Scroll config
-        ttk.Label(dlg, text="Perfil de rolagem:", style="Dark.TLabel").pack(anchor=tk.W, **pad)
-        scroll_options = ["— Nao alterar —", "Padrao Global", "Lento", "Normal", "Rapido"]
-        combo_scroll = ttk.Combobox(dlg, values=scroll_options, state="readonly", style="Dark.TCombobox", width=37)
-        combo_scroll.pack(**pad)
-        combo_scroll.current(0)
+        layout.addWidget(QLabel("Perfil de rolagem:"))
+        scroll_options = ["\u2014 Nao alterar \u2014", "Padrao Global", "Lento", "Normal", "Rapido"]
+        combo_scroll = QComboBox()
+        combo_scroll.addItems(scroll_options)
+        combo_scroll.setCurrentIndex(0)
+        layout.addWidget(combo_scroll)
 
         # Notes
-        ttk.Label(dlg, text="Notas (deixe vazio para nao alterar):", style="Dark.TLabel").pack(anchor=tk.W, **pad)
-        txt_notes = tk.Text(dlg, height=3, width=40, bg="#0d1b2a", fg="#e0e0e0", insertbackground="#e0e0e0", relief="flat")
-        txt_notes.pack(**pad)
+        layout.addWidget(QLabel("Notas (deixe vazio para nao alterar):"))
+        txt_notes = QPlainTextEdit()
+        txt_notes.setMaximumHeight(72)
+        layout.addWidget(txt_notes)
 
         def save():
-            updates = {}
+            updates: dict = {}
             changed = 0
 
             # Proxy
-            proxy_val = ent_proxy.get().strip()
+            proxy_val = ent_proxy.text().strip()
             if proxy_val:
                 updates["proxy"] = proxy_val
                 changed += 1
 
             # Schedule
-            sched_idx = combo_sched.current()
+            sched_idx = combo_sched.currentIndex()
             sched_id = schedule_ids[sched_idx]
             if sched_id is not None:
                 updates["schedule_id"] = sched_id
                 changed += 1
 
             # Scroll config
-            scroll_choice = combo_scroll.get()
-            if scroll_choice != "— Nao alterar —":
+            scroll_choice = combo_scroll.currentText()
+            if scroll_choice != "\u2014 Nao alterar \u2014":
                 if scroll_choice == "Padrao Global":
                     updates["scroll_config"] = None
                 else:
@@ -545,17 +593,17 @@ class AccountsTab(ttk.Frame):
                 changed += 1
 
             # Notes
-            notes_val = txt_notes.get("1.0", tk.END).strip()
+            notes_val = txt_notes.toPlainText().strip()
             if notes_val:
                 updates["notes"] = notes_val
                 changed += 1
 
             # Categories
-            selected_cat_ids = [cat_ids[i] for i in cat_listbox.curselection()]
-            cat_changed = len(cat_listbox.curselection()) > 0
+            selected_cat_ids = [cat_ids[i] for i in range(cat_listwidget.count()) if cat_listwidget.item(i).isSelected()]
+            cat_changed = len(selected_cat_ids) > 0
 
             if changed == 0 and not cat_changed:
-                messagebox.showinfo("Info", "Nenhum campo foi alterado.", parent=dlg)
+                QMessageBox.information(dlg, "Info", "Nenhum campo foi alterado.")
                 return
 
             for aid in account_ids:
@@ -576,11 +624,17 @@ class AccountsTab(ttk.Frame):
             if cat_changed:
                 fields.append("categorias")
 
-            dlg.destroy()
+            dlg.accept()
             self.refresh()
             self.app.set_status(f"{count} conta(s) atualizadas ({', '.join(fields)})")
 
-        ttk.Button(dlg, text="Aplicar a Todas", style="Accent.TButton", command=save).pack(pady=12)
+        layout.addStretch()
+        btn_apply = QPushButton("Aplicar a Todas")
+        btn_apply.setObjectName("accent")
+        btn_apply.clicked.connect(save)
+        layout.addWidget(btn_apply)
+
+        dlg.exec()
 
     # ==================================================================
     # Actions
@@ -588,12 +642,12 @@ class AccountsTab(ttk.Frame):
 
     def _open_profile(self) -> None:
         """Open selected accounts' Twitter/X profiles in the browser."""
-        sel = self._tree.selection()
-        if not sel:
-            messagebox.showwarning("Aviso", "Selecione uma ou mais contas.", parent=self)
+        selected_rows = {idx.row() for idx in self._table.selectionModel().selectedRows()}
+        if not selected_rows:
+            QMessageBox.warning(self, "Aviso", "Selecione uma ou mais contas.")
             return
-        for iid in sel:
-            username = self._username_map.get(iid, "")
+        for row in selected_rows:
+            username = self._username_map.get(row, "")
             if username:
                 webbrowser.open(f"https://x.com/{username}")
 
@@ -601,7 +655,7 @@ class AccountsTab(ttk.Frame):
         """Toggle status between idle and paused for selected accounts."""
         ids = self._get_selected_ids()
         if not ids:
-            messagebox.showwarning("Aviso", "Selecione uma ou mais contas.", parent=self)
+            QMessageBox.warning(self, "Aviso", "Selecione uma ou mais contas.")
             return
         toggled = 0
         for aid in ids:
@@ -622,7 +676,7 @@ class AccountsTab(ttk.Frame):
         """Reset selected accounts' schedules to day 1 (today)."""
         ids = self._get_selected_ids()
         if not ids:
-            messagebox.showwarning("Aviso", "Selecione uma ou mais contas.", parent=self)
+            QMessageBox.warning(self, "Aviso", "Selecione uma ou mais contas.")
             return
         count = len(ids)
         msg = (
@@ -633,7 +687,8 @@ class AccountsTab(ttk.Frame):
             "- Limpar o historico de acoes\n\n"
             "Tem certeza?"
         )
-        if not messagebox.askyesno("Reiniciar Cronograma", msg, parent=self):
+        reply = QMessageBox.question(self, "Reiniciar Cronograma", msg)
+        if reply != QMessageBox.StandardButton.Yes:
             return
         for aid in ids:
             self.app.account_manager.reset_schedule(aid)
@@ -643,11 +698,12 @@ class AccountsTab(ttk.Frame):
     def _delete_account(self) -> None:
         ids = self._get_selected_ids()
         if not ids:
-            messagebox.showwarning("Aviso", "Selecione uma ou mais contas para excluir.", parent=self)
+            QMessageBox.warning(self, "Aviso", "Selecione uma ou mais contas para excluir.")
             return
         count = len(ids)
         msg = f"Excluir {count} conta(s) selecionada(s)?" if count > 1 else "Excluir esta conta?"
-        if not messagebox.askyesno("Confirmar", msg, parent=self):
+        reply = QMessageBox.question(self, "Confirmar", msg)
+        if reply != QMessageBox.StandardButton.Yes:
             return
         for aid in ids:
             self.app.account_manager.delete_account(aid)
@@ -658,20 +714,21 @@ class AccountsTab(ttk.Frame):
         """Import cookies from a file and assign to selected accounts."""
         ids = self._get_selected_ids()
         if not ids:
-            messagebox.showwarning("Aviso", "Selecione uma ou mais contas para importar cookies.", parent=self)
+            QMessageBox.warning(self, "Aviso", "Selecione uma ou mais contas para importar cookies.")
             return
 
-        path = filedialog.askopenfilename(
-            title="Selecionar arquivo de cookies",
-            filetypes=[("JSON", "*.json"), ("Netscape TXT", "*.txt"), ("Todos", "*.*")],
-            parent=self,
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Selecionar arquivo de cookies",
+            "",
+            "JSON (*.json);;Netscape TXT (*.txt);;Todos (*.*)",
         )
         if not path:
             return
 
         cookies = self._load_cookies(path)
         if cookies is None:
-            messagebox.showerror("Erro", "Falha ao carregar cookies do arquivo.", parent=self)
+            QMessageBox.critical(self, "Erro", "Falha ao carregar cookies do arquivo.")
             return
 
         for aid in ids:
@@ -688,10 +745,11 @@ class AccountsTab(ttk.Frame):
 
         Each file becomes one account. The username is derived from the filename.
         """
-        file_paths = filedialog.askopenfilenames(
-            title="Selecionar arquivos de cookies (multiplos)",
-            filetypes=[("JSON files", "*.json"), ("Todos", "*.*")],
-            parent=self,
+        file_paths, _ = QFileDialog.getOpenFileNames(
+            self,
+            "Selecionar arquivos de cookies (multiplos)",
+            "",
+            "JSON files (*.json);;Todos (*.*)",
         )
         if not file_paths:
             return
@@ -744,7 +802,7 @@ class AccountsTab(ttk.Frame):
             for fname, err in failures:
                 lines.append(f"  - {fname}: {err}")
 
-        messagebox.showinfo("Importacao em Massa", "\n".join(lines), parent=self)
+        QMessageBox.information(self, "Importacao em Massa", "\n".join(lines))
         self.app.set_status(f"{len(successes)} conta(s) importada(s)")
         self.refresh()
 
@@ -754,78 +812,78 @@ class AccountsTab(ttk.Frame):
 
     def _manage_categories(self) -> None:
         """Open a dialog to create and delete categories."""
-        dlg = tk.Toplevel(self)
-        dlg.title("Gerenciar Categorias")
-        dlg.geometry("380x400")
-        dlg.configure(bg="#1a1a2e")
-        dlg.resizable(False, False)
-        dlg.grab_set()
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Gerenciar Categorias")
+        dlg.setFixedSize(380, 400)
+        dlg.setModal(True)
 
-        bg = "#1a1a2e"
-        fg = "#e0e0e0"
+        layout = QVBoxLayout(dlg)
+        layout.setSpacing(6)
+        layout.setContentsMargins(12, 12, 12, 12)
 
-        ttk.Label(dlg, text="Categorias", style="Heading.TLabel").pack(pady=(12, 6))
+        lbl_heading = QLabel("Categorias")
+        lbl_heading.setStyleSheet("font-size: 13pt; font-weight: bold;")
+        lbl_heading.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(lbl_heading)
 
         # Listbox
-        list_frame = tk.Frame(dlg, bg=bg)
-        list_frame.pack(fill=tk.BOTH, expand=True, padx=12, pady=4)
-
-        cat_listbox = tk.Listbox(
-            list_frame, bg="#0d1b2a", fg=fg, selectbackground="#1a73e8",
-            relief="flat", highlightthickness=0, font=("Segoe UI", 10),
-        )
-        cat_listbox.pack(fill=tk.BOTH, expand=True)
+        cat_listwidget = QListWidget()
+        layout.addWidget(cat_listwidget, stretch=1)
 
         def refresh_list():
-            cat_listbox.delete(0, tk.END)
+            cat_listwidget.clear()
             for cat in self.app.category_manager.get_all_categories():
-                cat_listbox.insert(tk.END, cat["name"])
+                cat_listwidget.addItem(cat["name"])
 
         refresh_list()
 
         # Add section
-        add_frame = tk.Frame(dlg, bg=bg)
-        add_frame.pack(fill=tk.X, padx=12, pady=8)
-
-        ent_name = ttk.Entry(add_frame, style="Dark.TEntry", width=25)
-        ent_name.pack(side=tk.LEFT, padx=(0, 6))
+        add_row = QHBoxLayout()
+        ent_name = QLineEdit()
+        ent_name.setPlaceholderText("Nome da categoria...")
+        add_row.addWidget(ent_name)
 
         def on_add():
-            name = ent_name.get().strip()
+            name = ent_name.text().strip()
             if not name:
                 return
             try:
                 self.app.category_manager.add_category(name)
-                ent_name.delete(0, tk.END)
+                ent_name.clear()
                 refresh_list()
             except Exception:
-                messagebox.showerror("Erro", "Categoria ja existe ou nome invalido.", parent=dlg)
+                QMessageBox.critical(dlg, "Erro", "Categoria ja existe ou nome invalido.")
 
-        ttk.Button(add_frame, text="Adicionar", style="Accent.TButton", command=on_add).pack(side=tk.LEFT)
+        btn_add = QPushButton("Adicionar")
+        btn_add.setObjectName("accent")
+        btn_add.clicked.connect(on_add)
+        add_row.addWidget(btn_add)
+        layout.addLayout(add_row)
 
         # Delete button
         def on_delete():
-            sel = cat_listbox.curselection()
-            if not sel:
+            items = cat_listwidget.selectedItems()
+            if not items:
                 return
-            selected_name = cat_listbox.get(sel[0])
+            selected_name = items[0].text()
             cats = self.app.category_manager.get_all_categories()
             cat = next((c for c in cats if c["name"] == selected_name), None)
             if cat is None:
                 refresh_list()
                 return
-            if not messagebox.askyesno("Confirmar", f"Excluir categoria '{cat['name']}'?", parent=dlg):
+            reply = QMessageBox.question(dlg, "Confirmar", f"Excluir categoria '{cat['name']}'?")
+            if reply != QMessageBox.StandardButton.Yes:
                 return
             self.app.category_manager.delete_category(cat["id"])
             refresh_list()
 
-        ttk.Button(dlg, text="Excluir Selecionada", style="Danger.TButton", command=on_delete).pack(pady=(0, 12))
+        btn_del = QPushButton("Excluir Selecionada")
+        btn_del.setObjectName("danger")
+        btn_del.clicked.connect(on_delete)
+        layout.addWidget(btn_del)
 
-        def on_close():
-            dlg.destroy()
-            self.refresh()
-
-        dlg.protocol("WM_DELETE_WINDOW", on_close)
+        dlg.finished.connect(lambda _: self.refresh())
+        dlg.exec()
 
     # ==================================================================
     # Helpers

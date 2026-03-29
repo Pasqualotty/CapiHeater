@@ -45,6 +45,13 @@ jobs:
             $dllSize = (Get-Item "dist\CapiHeater\python311.dll").Length / 1MB
             Write-Host "python311.dll: $([math]::Round($dllSize, 2)) MB - OK"
           }
+          # Verify Qt platform plugins (PySide6)
+          $qwindows = Get-ChildItem "dist\CapiHeater" -Recurse -Filter "qwindows.dll" -ErrorAction SilentlyContinue
+          if ($qwindows) {
+            Write-Host "Qt platform plugin found: $($qwindows.FullName) - OK"
+          } else {
+            Write-Host "WARNING: qwindows.dll not found in dist! App may fail to start."
+          }
 
       - name: Create zip archive
         run: Compress-Archive -Path "dist\CapiHeater\*" -DestinationPath "dist\CapiHeater.zip" -Force

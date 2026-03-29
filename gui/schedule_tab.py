@@ -3,25 +3,47 @@ ScheduleTab - Visualization and editing of warming schedules.
 """
 
 import json
-import tkinter as tk
-from tkinter import ttk, messagebox, simpledialog
+
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import (
+    QCheckBox,
+    QComboBox,
+    QDialog,
+    QDialogButtonBox,
+    QFormLayout,
+    QHBoxLayout,
+    QHeaderView,
+    QInputDialog,
+    QLabel,
+    QLineEdit,
+    QMessageBox,
+    QPushButton,
+    QSpinBox,
+    QTableWidget,
+    QTableWidgetItem,
+    QVBoxLayout,
+    QWidget,
+)
+
+from gui.base import BaseTab
+from gui.theme import BG_DARK, BG_SECONDARY, FG_MUTED, FG_TEXT
 
 
-class ScheduleTab(ttk.Frame):
+class ScheduleTab(BaseTab):
     """Schedule management with view, edit, create, and delete.
 
     Parameters
     ----------
-    parent : tk.Widget
-        Parent frame (notebook tab container).
     app : CapiHeaterApp
         Reference to the main application instance.
+    parent : QWidget | None
+        Parent widget.
     """
 
-    def __init__(self, parent, app, **kwargs):
-        super().__init__(parent, style="Tab.TFrame", **kwargs)
-        self.app = app
+    def __init__(self, app, parent=None):
+        super().__init__(app, parent)
         self._schedules: list[dict] = []
+        self._filtered_schedules: list[dict] = []
         self._build_ui()
         self._load_schedules()
 
@@ -30,95 +52,90 @@ class ScheduleTab(ttk.Frame):
     # ==================================================================
 
     def _build_ui(self) -> None:
-        # Header
-        header = ttk.Frame(self, style="Dark.TFrame")
-        header.pack(fill=tk.X, padx=12, pady=(12, 6))
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(6)
 
-        ttk.Label(header, text="Gerenciar Cronogramas", style="Heading.TLabel").pack(side=tk.LEFT)
+        # Header
+        heading = QLabel("Gerenciar Cronogramas")
+        heading.setStyleSheet("font-size: 14pt; font-weight: bold; color: #ffffff;")
+        layout.addWidget(heading)
 
         # Search + Schedule selector row
-        sel_frame = ttk.Frame(self, style="Dark.TFrame")
-        sel_frame.pack(fill=tk.X, padx=12, pady=(0, 6))
+        sel_layout = QHBoxLayout()
+        sel_layout.setSpacing(6)
 
-        ttk.Label(sel_frame, text="Pesquisar:", style="Dark.TLabel").pack(side=tk.LEFT, padx=(0, 6))
-        self._search_var = tk.StringVar()
-        self._search_var.trace_add("write", lambda *_: self._filter_schedules())
-        search_entry = ttk.Entry(sel_frame, textvariable=self._search_var, style="Dark.TEntry", width=20)
-        search_entry.pack(side=tk.LEFT, padx=(0, 12))
+        sel_layout.addWidget(QLabel("Pesquisar:"))
+        self._search_edit = QLineEdit()
+        self._search_edit.setFixedWidth(160)
+        self._search_edit.textChanged.connect(self._filter_schedules)
+        sel_layout.addWidget(self._search_edit)
 
-        ttk.Label(sel_frame, text="Cronograma:", style="Dark.TLabel").pack(side=tk.LEFT, padx=(0, 8))
-        self._combo = ttk.Combobox(sel_frame, state="readonly", style="Dark.TCombobox", width=30)
-        self._combo.pack(side=tk.LEFT)
-        self._combo.bind("<<ComboboxSelected>>", self._on_schedule_selected)
+        sel_layout.addSpacing(12)
+        sel_layout.addWidget(QLabel("Cronograma:"))
+        self._combo = QComboBox()
+        self._combo.setMinimumWidth(220)
+        self._combo.currentIndexChanged.connect(self._on_schedule_selected)
+        sel_layout.addWidget(self._combo)
 
-        # Info label
-        self._info_var = tk.StringVar(value="")
-        ttk.Label(sel_frame, textvariable=self._info_var, style="Dark.TLabel").pack(side=tk.LEFT, padx=12)
+        self._info_label = QLabel("")
+        self._info_label.setStyleSheet(f"color: {FG_MUTED};")
+        sel_layout.addSpacing(12)
+        sel_layout.addWidget(self._info_label)
+        sel_layout.addStretch()
+
+        layout.addLayout(sel_layout)
 
         # Buttons row
-        btn_frame = ttk.Frame(self, style="Dark.TFrame")
-        btn_frame.pack(fill=tk.X, padx=12, pady=(0, 6))
+        btn_layout = QHBoxLayout()
+        btn_layout.setSpacing(6)
 
-        ttk.Button(btn_frame, text="Novo Cronograma", style="Accent.TButton",
-                   command=self._on_new).pack(side=tk.LEFT, padx=(0, 6))
-        ttk.Button(btn_frame, text="Duplicar", style="Accent.TButton",
-                   command=self._on_duplicate).pack(side=tk.LEFT, padx=(0, 6))
-        ttk.Button(btn_frame, text="Editar Dia", style="Accent.TButton",
-                   command=self._on_edit_day).pack(side=tk.LEFT, padx=(0, 6))
-        ttk.Button(btn_frame, text="Adicionar Dia", style="Accent.TButton",
-                   command=self._on_add_day).pack(side=tk.LEFT, padx=(0, 6))
-        ttk.Button(btn_frame, text="Duplicar Dia", style="Accent.TButton",
-                   command=self._on_duplicate_day).pack(side=tk.LEFT, padx=(0, 6))
-        ttk.Button(btn_frame, text="Remover Dia", style="Accent.TButton",
-                   command=self._on_remove_day).pack(side=tk.LEFT, padx=(0, 6))
-        ttk.Button(btn_frame, text="Excluir Cronograma", style="Danger.TButton",
-                   command=self._on_delete).pack(side=tk.RIGHT)
+        for text, slot in [
+            ("Novo Cronograma", self._on_new),
+            ("Duplicar", self._on_duplicate),
+            ("Editar Dia", self._on_edit_day),
+            ("Adicionar Dia", self._on_add_day),
+            ("Duplicar Dia", self._on_duplicate_day),
+            ("Remover Dia", self._on_remove_day),
+        ]:
+            btn = QPushButton(text)
+            btn.clicked.connect(slot)
+            btn_layout.addWidget(btn)
 
-        # Treeview
-        tree_frame = ttk.Frame(self, style="Dark.TFrame")
-        tree_frame.pack(fill=tk.BOTH, expand=True, padx=12, pady=(6, 12))
+        btn_layout.addStretch()
 
-        columns = ("dia", "likes", "follows", "retweets", "unfollows", "browse_before", "browse_between", "posts_to_open")
-        self._tree = ttk.Treeview(
-            tree_frame,
-            columns=columns,
-            show="headings",
-            style="Dark.Treeview",
-            selectmode="browse",
-        )
+        del_btn = QPushButton("Excluir Cronograma")
+        del_btn.setObjectName("danger")
+        del_btn.clicked.connect(self._on_delete)
+        btn_layout.addWidget(del_btn)
 
-        self._tree.heading("dia", text="Dia")
-        self._tree.heading("likes", text="Likes")
-        self._tree.heading("follows", text="Follows")
-        self._tree.heading("retweets", text="Retweets")
-        self._tree.heading("unfollows", text="Unfollows")
-        self._tree.heading("browse_before", text="Feed Antes (seg)")
-        self._tree.heading("browse_between", text="Feed Entre (seg)")
-        self._tree.heading("posts_to_open", text="Abrir Posts")
+        layout.addLayout(btn_layout)
 
-        self._tree.column("dia", width=60, anchor=tk.CENTER)
-        self._tree.column("likes", width=70, anchor=tk.CENTER)
-        self._tree.column("follows", width=70, anchor=tk.CENTER)
-        self._tree.column("retweets", width=80, anchor=tk.CENTER)
-        self._tree.column("unfollows", width=80, anchor=tk.CENTER)
-        self._tree.column("browse_before", width=120, anchor=tk.CENTER)
-        self._tree.column("browse_between", width=120, anchor=tk.CENTER)
-        self._tree.column("posts_to_open", width=80, anchor=tk.CENTER)
+        # Table
+        self._table = QTableWidget()
+        self._table.setColumnCount(8)
+        self._table.setHorizontalHeaderLabels([
+            "Dia", "Likes", "Follows", "Retweets", "Unfollows",
+            "Feed Antes (seg)", "Feed Entre (seg)", "Abrir Posts",
+        ])
+        self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self._table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
+        self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self._table.setAlternatingRowColors(True)
+        self._table.verticalHeader().setVisible(False)
+        self._table.doubleClicked.connect(lambda _: self._on_edit_day())
 
-        # Double-click to edit
-        self._tree.bind("<Double-1>", lambda _e: self._on_edit_day())
+        header = self._table.horizontalHeader()
+        header.setStretchLastSection(True)
+        for col in range(8):
+            header.setSectionResizeMode(col, QHeaderView.ResizeMode.Stretch)
 
-        scrollbar = ttk.Scrollbar(tree_frame, orient=tk.VERTICAL, command=self._tree.yview)
-        self._tree.configure(yscrollcommand=scrollbar.set)
-        self._tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        layout.addWidget(self._table, stretch=1)
 
         # Tip
-        ttk.Label(
-            self,
-            text="Dica: clique duplo em um dia para editar. Alteracoes sao salvas automaticamente.",
-            style="Dark.TLabel",
-        ).pack(padx=12, pady=(0, 12))
+        tip = QLabel("Dica: clique duplo em um dia para editar. Alteracoes sao salvas automaticamente.")
+        tip.setStyleSheet(f"color: {FG_MUTED}; font-size: 9pt;")
+        layout.addWidget(tip)
 
     # ==================================================================
     # Data
@@ -138,7 +155,7 @@ class ScheduleTab(ttk.Frame):
     def _filter_schedules(self) -> None:
         """Filter the schedule dropdown based on the search text."""
         all_schedules = getattr(self, "_schedules", [])
-        query = self._search_var.get().strip().lower()
+        query = self._search_edit.text().strip().lower()
 
         if query:
             self._filtered_schedules = [
@@ -147,32 +164,38 @@ class ScheduleTab(ttk.Frame):
         else:
             self._filtered_schedules = list(all_schedules)
 
+        # Block signals to avoid triggering _on_schedule_selected during rebuild
+        self._combo.blockSignals(True)
+        self._combo.clear()
         names = [s["name"] for s in self._filtered_schedules]
-        self._combo["values"] = names
+        self._combo.addItems(names)
+        self._combo.blockSignals(False)
 
         if names:
-            self._combo.current(0)
+            self._combo.setCurrentIndex(0)
             self._display_schedule(0)
         else:
-            self._combo.set("")
-            self._tree.delete(*self._tree.get_children())
-            self._info_var.set("")
+            self._table.setRowCount(0)
+            self._info_label.setText("")
 
-    def _on_schedule_selected(self, _event=None) -> None:
-        idx = self._combo.current()
+    def _on_schedule_selected(self, idx: int = -1) -> None:
         if idx >= 0:
             self._display_schedule(idx)
 
     def _display_schedule(self, idx: int) -> None:
         """Show the day-by-day breakdown for the selected schedule."""
-        self._tree.delete(*self._tree.get_children())
+        self._table.setRowCount(0)
 
         filtered = getattr(self, "_filtered_schedules", self._schedules)
+        if idx < 0 or idx >= len(filtered):
+            return
         schedule = filtered[idx]
-        self._info_var.set(schedule.get("description", ""))
+        self._info_label.setText(schedule.get("description", ""))
 
         days = self._parse_days(schedule)
-        for entry in days:
+        self._table.setRowCount(len(days))
+
+        for row, entry in enumerate(days):
             bb_min = entry.get("browse_before_min", 0)
             bb_max = entry.get("browse_before_max", 0)
             bw_min = entry.get("browse_between_min", 0)
@@ -181,20 +204,20 @@ class ScheduleTab(ttk.Frame):
             browse_before_str = f"{bb_min}-{bb_max}" if (bb_min or bb_max) else "0"
             browse_between_str = f"{bw_min}-{bw_max}" if (bw_min or bw_max) else "0"
 
-            self._tree.insert(
-                "",
-                tk.END,
-                values=(
-                    f"Dia {entry.get('day', '?')}",
-                    entry.get("likes", 0),
-                    entry.get("follows", 0),
-                    entry.get("retweets", 0),
-                    entry.get("unfollows", 0),
-                    browse_before_str,
-                    browse_between_str,
-                    entry.get("posts_to_open", 0),
-                ),
-            )
+            values = [
+                f"Dia {entry.get('day', '?')}",
+                str(entry.get("likes", 0)),
+                str(entry.get("follows", 0)),
+                str(entry.get("retweets", 0)),
+                str(entry.get("unfollows", 0)),
+                browse_before_str,
+                browse_between_str,
+                str(entry.get("posts_to_open", 0)),
+            ]
+            for col, val in enumerate(values):
+                item = QTableWidgetItem(val)
+                item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                self._table.setItem(row, col, item)
 
     def _parse_days(self, schedule: dict) -> list[dict]:
         raw = schedule.get("schedule_json", "[]")
@@ -205,7 +228,7 @@ class ScheduleTab(ttk.Frame):
         return days if isinstance(days, list) else []
 
     def _current_schedule(self) -> dict | None:
-        idx = self._combo.current()
+        idx = self._combo.currentIndex()
         filtered = getattr(self, "_filtered_schedules", self._schedules)
         if idx < 0 or idx >= len(filtered):
             return None
@@ -215,7 +238,7 @@ class ScheduleTab(ttk.Frame):
         """Re-select a schedule by name in the (possibly filtered) combo."""
         for i, s in enumerate(self._filtered_schedules):
             if s["name"] == name:
-                self._combo.current(i)
+                self._combo.setCurrentIndex(i)
                 self._display_schedule(i)
                 return
 
@@ -232,21 +255,27 @@ class ScheduleTab(ttk.Frame):
     # Actions
     # ==================================================================
 
+    def _selected_day_str(self) -> str | None:
+        """Return the day string of the currently selected table row, or None."""
+        rows = self._table.selectionModel().selectedRows()
+        if not rows:
+            return None
+        row = rows[0].row()
+        item = self._table.item(row, 0)
+        if item is None:
+            return None
+        return item.text().replace("Dia ", "")
+
     def _on_edit_day(self) -> None:
         """Edit the selected day's values."""
         schedule = self._current_schedule()
         if not schedule:
             return
 
-        selected = self._tree.selection()
-        if not selected:
-            messagebox.showwarning("Aviso", "Selecione um dia para editar.", parent=self)
+        day_str = self._selected_day_str()
+        if day_str is None:
+            QMessageBox.warning(self, "Aviso", "Selecione um dia para editar.")
             return
-
-        item = self._tree.item(selected[0])
-        values = item["values"]
-        # values = ("Dia X", likes, follows, retweets, unfollows)
-        day_str = str(values[0]).replace("Dia ", "")
 
         days = self._parse_days(schedule)
         day_idx = None
@@ -273,11 +302,13 @@ class ScheduleTab(ttk.Frame):
         days = self._parse_days(schedule)
         next_day = max((d.get("day", 0) for d in days), default=0) + 1
 
-        new_day = {"day": next_day, "likes": 0, "follows": 0, "retweets": 0, "unfollows": 0,
-                   "browse_before_min": 0, "browse_before_max": 0,
-                   "browse_between_min": 0, "browse_between_max": 0,
-                   "posts_to_open": 0, "view_comments_chance": 0.3,
-                   "likes_on_feed": True, "follow_initial_count": 0}
+        new_day = {
+            "day": next_day, "likes": 0, "follows": 0, "retweets": 0, "unfollows": 0,
+            "browse_before_min": 0, "browse_before_max": 0,
+            "browse_between_min": 0, "browse_between_max": 0,
+            "posts_to_open": 0, "view_comments_chance": 0.3,
+            "likes_on_feed": True, "follow_initial_count": 0,
+        }
         result = self._edit_day_dialog(new_day)
         if result:
             days.append(result)
@@ -289,13 +320,10 @@ class ScheduleTab(ttk.Frame):
         if not schedule:
             return
 
-        selected = self._tree.selection()
-        if not selected:
-            messagebox.showwarning("Aviso", "Selecione um dia para duplicar.", parent=self)
+        day_str = self._selected_day_str()
+        if day_str is None:
+            QMessageBox.warning(self, "Aviso", "Selecione um dia para duplicar.")
             return
-
-        item = self._tree.item(selected[0])
-        day_str = str(item["values"][0]).replace("Dia ", "")
 
         days = self._parse_days(schedule)
         day_idx = None
@@ -307,11 +335,9 @@ class ScheduleTab(ttk.Frame):
         if day_idx is None:
             return
 
-        # Shallow copy is fine — all values are scalars
         new_day = dict(days[day_idx])
         days.insert(day_idx + 1, new_day)
 
-        # Renumber sequentially
         for i, d in enumerate(days):
             d["day"] = i + 1
 
@@ -323,18 +349,14 @@ class ScheduleTab(ttk.Frame):
         if not schedule:
             return
 
-        selected = self._tree.selection()
-        if not selected:
-            messagebox.showwarning("Aviso", "Selecione um dia para remover.", parent=self)
+        day_str = self._selected_day_str()
+        if day_str is None:
+            QMessageBox.warning(self, "Aviso", "Selecione um dia para remover.")
             return
-
-        item = self._tree.item(selected[0])
-        day_str = str(item["values"][0]).replace("Dia ", "")
 
         days = self._parse_days(schedule)
         days = [d for d in days if str(d.get("day", "")) != day_str]
 
-        # Renumber days
         for i, d in enumerate(days):
             d["day"] = i + 1
 
@@ -342,17 +364,13 @@ class ScheduleTab(ttk.Frame):
 
     def _on_new(self) -> None:
         """Create a new empty schedule."""
-        name = simpledialog.askstring(
-            "Novo Cronograma", "Nome do cronograma:", parent=self
-        )
-        if not name or not name.strip():
+        name, ok = QInputDialog.getText(self, "Novo Cronograma", "Nome do cronograma:")
+        if not ok or not name or not name.strip():
             return
 
-        desc = simpledialog.askstring(
-            "Novo Cronograma", "Descricao (opcional):", parent=self
-        ) or ""
+        desc, _ = QInputDialog.getText(self, "Novo Cronograma", "Descricao (opcional):")
+        desc = desc or ""
 
-        # Start with a single day
         initial = [{"day": 1, "likes": 3, "follows": 0, "retweets": 0, "unfollows": 0}]
 
         self.app.db.execute(
@@ -360,11 +378,11 @@ class ScheduleTab(ttk.Frame):
             (name.strip(), desc.strip(), json.dumps(initial)),
         )
 
-        self._search_var.set("")
+        self._search_edit.clear()
         self._load_schedules()
         self._select_by_name(name.strip())
 
-        messagebox.showinfo("Sucesso", f"Cronograma '{name.strip()}' criado!", parent=self)
+        QMessageBox.information(self, "Sucesso", f"Cronograma '{name.strip()}' criado!")
 
     def _on_duplicate(self) -> None:
         """Duplicate the current schedule."""
@@ -372,13 +390,11 @@ class ScheduleTab(ttk.Frame):
         if not schedule:
             return
 
-        name = simpledialog.askstring(
-            "Duplicar Cronograma",
-            "Nome para a copia:",
-            initialvalue=f"{schedule['name']} (copia)",
-            parent=self,
+        name, ok = QInputDialog.getText(
+            self, "Duplicar Cronograma", "Nome para a copia:",
+            text=f"{schedule['name']} (copia)",
         )
-        if not name or not name.strip():
+        if not ok or not name or not name.strip():
             return
 
         self.app.db.execute(
@@ -386,11 +402,11 @@ class ScheduleTab(ttk.Frame):
             (name.strip(), schedule.get("description", ""), schedule.get("schedule_json", "[]")),
         )
 
-        self._search_var.set("")
+        self._search_edit.clear()
         self._load_schedules()
         self._select_by_name(name.strip())
 
-        messagebox.showinfo("Sucesso", f"Cronograma duplicado como '{name.strip()}'!", parent=self)
+        QMessageBox.information(self, "Sucesso", f"Cronograma duplicado como '{name.strip()}'!")
 
     def _on_delete(self) -> None:
         """Delete the current schedule."""
@@ -399,26 +415,26 @@ class ScheduleTab(ttk.Frame):
             return
 
         if len(self._schedules) <= 1:
-            messagebox.showwarning("Aviso", "Nao e possivel excluir o unico cronograma.", parent=self)
+            QMessageBox.warning(self, "Aviso", "Nao e possivel excluir o unico cronograma.")
             return
 
-        # Check if any account uses this schedule
         count = self.app.db.fetch_one(
             "SELECT COUNT(*) as c FROM accounts WHERE schedule_id = ?",
             (schedule["id"],),
         )
         if count and count.get("c", 0) > 0:
-            messagebox.showwarning(
-                "Aviso",
+            QMessageBox.warning(
+                self, "Aviso",
                 f"Existem {count['c']} conta(s) usando este cronograma.\n"
                 "Mude o cronograma dessas contas antes de excluir.",
-                parent=self,
             )
             return
 
-        if not messagebox.askyesno(
-            "Confirmar", f"Excluir cronograma '{schedule['name']}'?", parent=self
-        ):
+        reply = QMessageBox.question(
+            self, "Confirmar", f"Excluir cronograma '{schedule['name']}'?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
             return
 
         self.app.db.execute("DELETE FROM schedules WHERE id = ?", (schedule["id"],))
@@ -430,175 +446,159 @@ class ScheduleTab(ttk.Frame):
 
     def _edit_day_dialog(self, day: dict) -> dict | None:
         """Show a dialog to edit a single day's values. Returns updated dict or None."""
-        dlg = tk.Toplevel(self)
-        dlg.title(f"Dia {day.get('day', '?')}")
-        dlg.configure(bg="#1a1a2e")
-        dlg.resizable(False, False)
-        dlg.geometry("400x650")
-        dlg.transient(self.winfo_toplevel())
-        dlg.grab_set()
+        dlg = QDialog(self)
+        dlg.setModal(True)
+        dlg.setWindowTitle(f"Dia {day.get('day', '?')}")
+        dlg.setFixedWidth(420)
+        dlg.setStyleSheet(f"QDialog {{ background-color: {BG_DARK}; }}")
 
-        # Center
-        dlg.update_idletasks()
-        x = dlg.winfo_toplevel().winfo_rootx() + 200
-        y = dlg.winfo_toplevel().winfo_rooty() + 80
-        dlg.geometry(f"+{x}+{y}")
+        main_layout = QVBoxLayout(dlg)
+        main_layout.setContentsMargins(24, 16, 24, 16)
+        main_layout.setSpacing(4)
 
-        bg = "#1a1a2e"
-        fg = "#ffffff"
-        entry_bg = "#16213e"
-        section_fg = "#5588cc"
+        # Title
+        title = QLabel(f"Editar Dia {day.get('day', '?')}")
+        title.setStyleSheet("font-size: 13pt; font-weight: bold; color: #ffffff;")
+        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        main_layout.addWidget(title)
+        main_layout.addSpacing(8)
 
-        tk.Label(dlg, text=f"Editar Dia {day.get('day', '?')}", font=("Segoe UI", 13, "bold"),
-                 bg=bg, fg=fg).pack(pady=(16, 8))
-
-        fields_frame = tk.Frame(dlg, bg=bg)
-        fields_frame.pack(padx=24, fill=tk.X)
+        section_style = "font-weight: bold; color: #5588cc; font-size: 10pt;"
+        hint_style = f"color: {FG_MUTED}; font-size: 8pt;"
 
         # --- Actions section ---
-        tk.Label(fields_frame, text="Acoes", font=("Segoe UI", 10, "bold"),
-                 bg=bg, fg=section_fg).pack(anchor="w", pady=(4, 2))
+        sec_actions = QLabel("Acoes")
+        sec_actions.setStyleSheet(section_style)
+        main_layout.addWidget(sec_actions)
 
-        vars_ = {}
-        for label, key in [("Likes:", "likes"), ("Follows:", "follows"),
-                           ("Retweets:", "retweets"), ("Unfollows:", "unfollows")]:
-            row = tk.Frame(fields_frame, bg=bg)
-            row.pack(fill=tk.X, pady=2)
-            tk.Label(row, text=label, font=("Segoe UI", 10), bg=bg, fg=fg, width=14, anchor="w").pack(side=tk.LEFT)
-            var = tk.IntVar(value=day.get(key, 0))
-            vars_[key] = var
-            sp = tk.Spinbox(row, from_=0, to=100, textvariable=var, width=8,
-                            font=("Segoe UI", 10), bg=entry_bg, fg=fg,
-                            insertbackground=fg, buttonbackground="#0f3460")
-            sp.pack(side=tk.LEFT, padx=(8, 0))
+        spins: dict[str, QSpinBox] = {}
 
-        # Variation hint
-        tk.Label(fields_frame,
-                 text="Os valores acima variam automaticamente em +/-20% para simular comportamento humano.",
-                 font=("Segoe UI", 8), bg=bg, fg="#888899", wraplength=340).pack(anchor="w", pady=(4, 0))
+        def _add_spin_row(label_text: str, key: str, max_val: int = 100) -> None:
+            row = QHBoxLayout()
+            lbl = QLabel(label_text)
+            lbl.setFixedWidth(120)
+            row.addWidget(lbl)
+            sp = QSpinBox()
+            sp.setRange(0, max_val)
+            sp.setValue(day.get(key, 0))
+            sp.setFixedWidth(80)
+            spins[key] = sp
+            row.addWidget(sp)
+            row.addStretch()
+            main_layout.addLayout(row)
+
+        for label_text, key in [("Likes:", "likes"), ("Follows:", "follows"),
+                                ("Retweets:", "retweets"), ("Unfollows:", "unfollows")]:
+            _add_spin_row(label_text, key)
+
+        variation_hint = QLabel(
+            "Os valores acima variam automaticamente em +/-20% para simular comportamento humano."
+        )
+        variation_hint.setStyleSheet(hint_style)
+        variation_hint.setWordWrap(True)
+        main_layout.addWidget(variation_hint)
 
         # --- Feed browsing section ---
-        tk.Label(fields_frame, text="Navegar pelo Feed (segundos)", font=("Segoe UI", 10, "bold"),
-                 bg=bg, fg=section_fg).pack(anchor="w", pady=(12, 2))
+        main_layout.addSpacing(8)
+        sec_feed = QLabel("Navegar pelo Feed (segundos)")
+        sec_feed.setStyleSheet(section_style)
+        main_layout.addWidget(sec_feed)
 
-        tk.Label(fields_frame, text="Antes das acoes (seg):", font=("Segoe UI", 9),
-                 bg=bg, fg="#9e9e9e").pack(anchor="w")
+        sub_lbl1 = QLabel("Antes das acoes (seg):")
+        sub_lbl1.setStyleSheet(f"color: {FG_MUTED}; font-size: 9pt;")
+        main_layout.addWidget(sub_lbl1)
 
-        row_bb = tk.Frame(fields_frame, bg=bg)
-        row_bb.pack(fill=tk.X, pady=2)
-        tk.Label(row_bb, text="Min:", font=("Segoe UI", 10), bg=bg, fg=fg, width=5, anchor="w").pack(side=tk.LEFT)
-        bb_min_var = tk.IntVar(value=day.get("browse_before_min", 0))
-        vars_["browse_before_min"] = bb_min_var
-        tk.Spinbox(row_bb, from_=0, to=3600, textvariable=bb_min_var, width=6,
-                   font=("Segoe UI", 10), bg=entry_bg, fg=fg,
-                   insertbackground=fg, buttonbackground="#0f3460").pack(side=tk.LEFT, padx=(4, 12))
-        tk.Label(row_bb, text="Max:", font=("Segoe UI", 10), bg=bg, fg=fg, width=5, anchor="w").pack(side=tk.LEFT)
-        bb_max_var = tk.IntVar(value=day.get("browse_before_max", 0))
-        vars_["browse_before_max"] = bb_max_var
-        tk.Spinbox(row_bb, from_=0, to=3600, textvariable=bb_max_var, width=6,
-                   font=("Segoe UI", 10), bg=entry_bg, fg=fg,
-                   insertbackground=fg, buttonbackground="#0f3460").pack(side=tk.LEFT, padx=(4, 0))
+        def _add_min_max_row(key_min: str, key_max: str) -> None:
+            row = QHBoxLayout()
+            row.addWidget(QLabel("Min:"))
+            sp_min = QSpinBox()
+            sp_min.setRange(0, 3600)
+            sp_min.setValue(day.get(key_min, 0))
+            sp_min.setFixedWidth(70)
+            spins[key_min] = sp_min
+            row.addWidget(sp_min)
+            row.addSpacing(12)
+            row.addWidget(QLabel("Max:"))
+            sp_max = QSpinBox()
+            sp_max.setRange(0, 3600)
+            sp_max.setValue(day.get(key_max, 0))
+            sp_max.setFixedWidth(70)
+            spins[key_max] = sp_max
+            row.addWidget(sp_max)
+            row.addStretch()
+            main_layout.addLayout(row)
 
-        tk.Label(fields_frame, text="Entre as acoes (seg):", font=("Segoe UI", 9),
-                 bg=bg, fg="#9e9e9e").pack(anchor="w", pady=(6, 0))
+        _add_min_max_row("browse_before_min", "browse_before_max")
 
-        row_bw = tk.Frame(fields_frame, bg=bg)
-        row_bw.pack(fill=tk.X, pady=2)
-        tk.Label(row_bw, text="Min:", font=("Segoe UI", 10), bg=bg, fg=fg, width=5, anchor="w").pack(side=tk.LEFT)
-        bw_min_var = tk.IntVar(value=day.get("browse_between_min", 0))
-        vars_["browse_between_min"] = bw_min_var
-        tk.Spinbox(row_bw, from_=0, to=3600, textvariable=bw_min_var, width=6,
-                   font=("Segoe UI", 10), bg=entry_bg, fg=fg,
-                   insertbackground=fg, buttonbackground="#0f3460").pack(side=tk.LEFT, padx=(4, 12))
-        tk.Label(row_bw, text="Max:", font=("Segoe UI", 10), bg=bg, fg=fg, width=5, anchor="w").pack(side=tk.LEFT)
-        bw_max_var = tk.IntVar(value=day.get("browse_between_max", 0))
-        vars_["browse_between_max"] = bw_max_var
-        tk.Spinbox(row_bw, from_=0, to=3600, textvariable=bw_max_var, width=6,
-                   font=("Segoe UI", 10), bg=entry_bg, fg=fg,
-                   insertbackground=fg, buttonbackground="#0f3460").pack(side=tk.LEFT, padx=(4, 0))
+        sub_lbl2 = QLabel("Entre as acoes (seg):")
+        sub_lbl2.setStyleSheet(f"color: {FG_MUTED}; font-size: 9pt;")
+        main_layout.addWidget(sub_lbl2)
 
-        # Hint
-        tk.Label(fields_frame, text="Ex: Antes 120-300 seg, Entre 30-90 seg",
-                 font=("Segoe UI", 8), bg=bg, fg="#666688").pack(anchor="w", pady=(6, 0))
+        _add_min_max_row("browse_between_min", "browse_between_max")
+
+        feed_hint = QLabel("Ex: Antes 120-300 seg, Entre 30-90 seg")
+        feed_hint.setStyleSheet("color: #666688; font-size: 8pt;")
+        main_layout.addWidget(feed_hint)
 
         # --- Comportamento section ---
-        tk.Label(fields_frame, text="Comportamento", font=("Segoe UI", 10, "bold"),
-                 bg=bg, fg=section_fg).pack(anchor="w", pady=(12, 2))
+        main_layout.addSpacing(8)
+        sec_behavior = QLabel("Comportamento")
+        sec_behavior.setStyleSheet(section_style)
+        main_layout.addWidget(sec_behavior)
 
-        row_pto = tk.Frame(fields_frame, bg=bg)
-        row_pto.pack(fill=tk.X, pady=2)
-        tk.Label(row_pto, text="Abrir postagens:", font=("Segoe UI", 10), bg=bg, fg=fg, width=14, anchor="w").pack(side=tk.LEFT)
-        pto_var = tk.IntVar(value=day.get("posts_to_open", 0))
-        vars_["posts_to_open"] = pto_var
-        tk.Spinbox(row_pto, from_=0, to=20, textvariable=pto_var, width=8,
-                   font=("Segoe UI", 10), bg=entry_bg, fg=fg,
-                   insertbackground=fg, buttonbackground="#0f3460").pack(side=tk.LEFT, padx=(8, 0))
+        _add_spin_row("Abrir postagens:", "posts_to_open", max_val=20)
 
-        row_vcc = tk.Frame(fields_frame, bg=bg)
-        row_vcc.pack(fill=tk.X, pady=2)
-        tk.Label(row_vcc, text="Ver comentarios (%):", font=("Segoe UI", 10), bg=bg, fg=fg, width=14, anchor="w").pack(side=tk.LEFT)
-        vcc_var = tk.IntVar(value=int(day.get("view_comments_chance", 0.3) * 100))
-        vars_["view_comments_chance"] = vcc_var
-        tk.Spinbox(row_vcc, from_=0, to=100, textvariable=vcc_var, width=8,
-                   font=("Segoe UI", 10), bg=entry_bg, fg=fg,
-                   insertbackground=fg, buttonbackground="#0f3460").pack(side=tk.LEFT, padx=(8, 0))
+        # View comments chance (stored as 0-1 float, edited as 0-100 int)
+        row_vcc = QHBoxLayout()
+        lbl_vcc = QLabel("Ver comentarios (%):")
+        lbl_vcc.setFixedWidth(120)
+        row_vcc.addWidget(lbl_vcc)
+        sp_vcc = QSpinBox()
+        sp_vcc.setRange(0, 100)
+        sp_vcc.setValue(int(day.get("view_comments_chance", 0.3) * 100))
+        sp_vcc.setFixedWidth(80)
+        spins["view_comments_chance"] = sp_vcc
+        row_vcc.addWidget(sp_vcc)
+        row_vcc.addStretch()
+        main_layout.addLayout(row_vcc)
 
-        row_lof = tk.Frame(fields_frame, bg=bg)
-        row_lof.pack(fill=tk.X, pady=2)
-        tk.Label(row_lof, text="Curtir no feed:", font=("Segoe UI", 10), bg=bg, fg=fg, width=14, anchor="w").pack(side=tk.LEFT)
-        lof_var = tk.BooleanVar(value=day.get("likes_on_feed", True))
-        vars_["likes_on_feed"] = lof_var
-        tk.Checkbutton(row_lof, variable=lof_var, bg=bg, fg=fg, selectcolor=entry_bg,
-                       activebackground=bg, activeforeground=fg).pack(side=tk.LEFT, padx=(8, 0))
+        # Checkboxes
+        chk_likes_feed = QCheckBox("Curtir no feed")
+        chk_likes_feed.setChecked(day.get("likes_on_feed", True))
+        main_layout.addWidget(chk_likes_feed)
 
-        row_rof = tk.Frame(fields_frame, bg=bg)
-        row_rof.pack(fill=tk.X, pady=2)
-        tk.Label(row_rof, text="RT no feed:", font=("Segoe UI", 10), bg=bg, fg=fg, width=14, anchor="w").pack(side=tk.LEFT)
-        rof_var = tk.BooleanVar(value=day.get("retweets_on_feed", True))
-        vars_["retweets_on_feed"] = rof_var
-        tk.Checkbutton(row_rof, variable=rof_var, bg=bg, fg=fg, selectcolor=entry_bg,
-                       activebackground=bg, activeforeground=fg).pack(side=tk.LEFT, padx=(8, 0))
+        chk_rt_feed = QCheckBox("RT no feed")
+        chk_rt_feed.setChecked(day.get("retweets_on_feed", True))
+        main_layout.addWidget(chk_rt_feed)
 
-        row_fic = tk.Frame(fields_frame, bg=bg)
-        row_fic.pack(fill=tk.X, pady=2)
-        tk.Label(row_fic, text="Follows iniciais:", font=("Segoe UI", 10), bg=bg, fg=fg, width=14, anchor="w").pack(side=tk.LEFT)
-        fic_var = tk.IntVar(value=day.get("follow_initial_count", 0))
-        vars_["follow_initial_count"] = fic_var
-        tk.Spinbox(row_fic, from_=0, to=10, textvariable=fic_var, width=8,
-                   font=("Segoe UI", 10), bg=entry_bg, fg=fg,
-                   insertbackground=fg, buttonbackground="#0f3460").pack(side=tk.LEFT, padx=(8, 0))
+        _add_spin_row("Follows iniciais:", "follow_initial_count", max_val=10)
 
-        result = {"accepted": False}
+        # Buttons
+        main_layout.addSpacing(12)
+        button_box = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel
+        )
+        button_box.button(QDialogButtonBox.StandardButton.Save).setText("Salvar")
+        button_box.button(QDialogButtonBox.StandardButton.Cancel).setText("Cancelar")
+        button_box.accepted.connect(dlg.accept)
+        button_box.rejected.connect(dlg.reject)
+        main_layout.addWidget(button_box)
 
-        def on_ok():
-            result["accepted"] = True
-            dlg.destroy()
-
-        btn_frame = tk.Frame(dlg, bg=bg)
-        btn_frame.pack(pady=16)
-
-        tk.Button(btn_frame, text="Salvar", font=("Segoe UI", 10, "bold"), bg="#0f3460", fg=fg,
-                  relief="flat", padx=16, pady=4, command=on_ok).pack(side=tk.LEFT, padx=6)
-        tk.Button(btn_frame, text="Cancelar", font=("Segoe UI", 10), bg="#333355", fg=fg,
-                  relief="flat", padx=16, pady=4, command=dlg.destroy).pack(side=tk.LEFT, padx=6)
-
-        dlg.wait_window()
-
-        if result["accepted"]:
+        if dlg.exec() == QDialog.DialogCode.Accepted:
             return {
                 "day": day.get("day", 1),
-                "likes": vars_["likes"].get(),
-                "follows": vars_["follows"].get(),
-                "retweets": vars_["retweets"].get(),
-                "unfollows": vars_["unfollows"].get(),
-                "browse_before_min": vars_["browse_before_min"].get(),
-                "browse_before_max": vars_["browse_before_max"].get(),
-                "browse_between_min": vars_["browse_between_min"].get(),
-                "browse_between_max": vars_["browse_between_max"].get(),
-                "posts_to_open": vars_["posts_to_open"].get(),
-                "view_comments_chance": vars_["view_comments_chance"].get() / 100.0,
-                "likes_on_feed": vars_["likes_on_feed"].get(),
-                "retweets_on_feed": vars_["retweets_on_feed"].get(),
-                "follow_initial_count": vars_["follow_initial_count"].get(),
+                "likes": spins["likes"].value(),
+                "follows": spins["follows"].value(),
+                "retweets": spins["retweets"].value(),
+                "unfollows": spins["unfollows"].value(),
+                "browse_before_min": spins["browse_before_min"].value(),
+                "browse_before_max": spins["browse_before_max"].value(),
+                "browse_between_min": spins["browse_between_min"].value(),
+                "browse_between_max": spins["browse_between_max"].value(),
+                "posts_to_open": spins["posts_to_open"].value(),
+                "view_comments_chance": spins["view_comments_chance"].value() / 100.0,
+                "likes_on_feed": chk_likes_feed.isChecked(),
+                "retweets_on_feed": chk_rt_feed.isChecked(),
+                "follow_initial_count": spins["follow_initial_count"].value(),
             }
         return None

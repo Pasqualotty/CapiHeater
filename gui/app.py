@@ -1,11 +1,24 @@
 """
-CapiHeaterApp - Main application window.
+CapiHeaterApp - Main application window (PySide6).
 """
 
-import tkinter as tk
-from tkinter import ttk, messagebox
-from queue import Queue
+import os
 import threading
+from queue import Queue
+
+from PySide6.QtCore import QTimer, Signal
+from PySide6.QtWidgets import (
+    QDialog,
+    QLabel,
+    QMainWindow,
+    QMessageBox,
+    QProgressBar,
+    QPushButton,
+    QStatusBar,
+    QTabWidget,
+    QVBoxLayout,
+    QWidget,
+)
 
 from version import __version__
 from database.db import Database
@@ -18,27 +31,11 @@ from utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-# ======================================================================
-# Theme constants
-# ======================================================================
-BG_DARK = "#1a1a2e"
-BG_SECONDARY = "#16213e"
-BG_ACCENT = "#0f3460"
-BG_INPUT = "#0d1b2a"
-FG_TEXT = "#e0e0e0"
-FG_MUTED = "#9e9e9e"
-FG_TITLE = "#ffffff"
-ACCENT_BLUE = "#0f3460"
-ACCENT_HIGHLIGHT = "#1a73e8"
-COLOR_SUCCESS = "#00e676"
-COLOR_WARNING = "#ffea00"
-COLOR_ERROR = "#ff1744"
-
 POLL_INTERVAL_MS = 100
 
 
-class CapiHeaterApp:
-    """Main Tkinter application window with tabbed interface.
+class CapiHeaterApp(QMainWindow):
+    """Main application window with tabbed interface.
 
     Parameters
     ----------
@@ -47,19 +44,23 @@ class CapiHeaterApp:
         Expected keys: ``user``, ``role``, ``token``.
     """
 
-    def __init__(self, auth_session: dict | None = None):
+    # Thread-safe signals for update checker
+    _sig_prompt_update = Signal(dict)
+    _sig_update_progress = Signal(int)
+    _sig_update_error = Signal(str)
+    _sig_update_done = Signal()
+
+    def __init__(self, auth_session: dict | None = None, parent=None):
+        super().__init__(parent)
         self.auth_session = auth_session
 
-        # ---- Tk root ----
-        self.root = tk.Tk()
-        self.root.title(f"{APP_NAME} v{__version__}")
-        self.root.geometry("1100x700")
-        self.root.minsize(900, 550)
-        self.root.configure(bg=BG_DARK)
+        # ---- Window setup ----
+        self.setWindowTitle(f"{APP_NAME} v{__version__}")
+        self.resize(1100, 700)
+        self.setMinimumSize(900, 550)
         self._center_window(1100, 700)
 
         # ---- Backend services ----
-        # Use per-user database if logged in, otherwise default
         db_path = DB_PATH
         if auth_session:
             session = auth_session.get("session")
@@ -79,44 +80,36 @@ class CapiHeaterApp:
             message_queue=self.message_queue,
         )
 
-        # ---- Styles ----
-        self._configure_styles()
+        # ---- Central widget with tabs ----
+        central = QWidget()
+        self.setCentralWidget(central)
+        main_layout = QVBoxLayout(central)
+        main_layout.setContentsMargins(4, 4, 4, 0)
+        main_layout.setSpacing(0)
 
-        # ---- Notebook (tabs) ----
-        self.notebook = ttk.Notebook(self.root, style="Dark.TNotebook")
-        self.notebook.pack(fill=tk.BOTH, expand=True, padx=4, pady=(4, 0))
+        self._tab_widget = QTabWidget()
+        main_layout.addWidget(self._tab_widget)
 
-        self._tabs: dict[str, ttk.Frame] = {}
+        self._tabs: dict[str, QWidget] = {}
+        self._tab_names: list[str] = []
         self._build_tabs()
 
-        # ---- Status bar with logout button ----
-        status_frame = ttk.Frame(self.root, style="Dark.TFrame")
-        status_frame.pack(fill=tk.X, side=tk.BOTTOM, padx=4, pady=(0, 4))
+        # Tab change handler
+        self._tab_widget.currentChanged.connect(self._on_tab_changed)
 
-        self._status_var = tk.StringVar(value="Pronto")
-        self._status_bar = ttk.Label(
-            status_frame,
-            textvariable=self._status_var,
-            style="StatusBar.TLabel",
-            anchor=tk.W,
-        )
-        self._status_bar.pack(fill=tk.X, side=tk.LEFT, expand=True)
+        # ---- Status bar ----
+        status_bar = QStatusBar()
+        self.setStatusBar(status_bar)
 
-        logout_btn = tk.Button(
-            status_frame,
-            text="Sair da Conta",
-            font=("Segoe UI", 8),
-            bg="#333355",
-            fg="#e0e0e0",
-            activebackground="#444466",
-            activeforeground="#ffffff",
-            relief="flat",
-            cursor="hand2",
-            padx=8,
-            pady=2,
-            command=self._on_logout,
+        self._status_label = QLabel("Pronto")
+        status_bar.addWidget(self._status_label, 1)
+
+        logout_btn = QPushButton("Sair da Conta")
+        logout_btn.setStyleSheet(
+            "font-size: 8pt; padding: 2px 8px;"
         )
-        logout_btn.pack(side=tk.RIGHT, padx=(6, 0))
+        logout_btn.clicked.connect(self._on_logout)
+        status_bar.addPermanentWidget(logout_btn)
 
         # ---- Admin tab (conditional) ----
         if auth_session:
@@ -124,11 +117,17 @@ class CapiHeaterApp:
             if role in ("admin", "moderator"):
                 self.add_admin_tab()
 
-        # ---- Start polling ----
-        self._poll_queue()
+        # ---- Connect signals ----
+        self._sig_prompt_update.connect(self._prompt_update)
+        self._sig_update_error.connect(self._on_update_error)
+
+        # ---- Start queue polling ----
+        self._poll_timer = QTimer(self)
+        self._poll_timer.timeout.connect(self._poll_queue)
+        self._poll_timer.start(POLL_INTERVAL_MS)
 
         # ---- Auto-update check (after 3 s) ----
-        self.root.after(3000, self._check_update)
+        QTimer.singleShot(3000, self._check_update)
 
     # ==================================================================
     # Tab construction
@@ -154,14 +153,10 @@ class CapiHeaterApp:
         ]
 
         for label, TabClass in tabs:
-            frame = ttk.Frame(self.notebook, style="Tab.TFrame")
-            tab_instance = TabClass(frame, self)
-            tab_instance.pack(fill=tk.BOTH, expand=True)
-            self.notebook.add(frame, text=f"  {label}  ")
+            tab_instance = TabClass(app=self)
+            self._tab_widget.addTab(tab_instance, f"  {label}  ")
             self._tabs[label] = tab_instance
-
-        # Auto-refresh tabs when selected
-        self.notebook.bind("<<NotebookTabChanged>>", self._on_tab_changed)
+            self._tab_names.append(label)
 
     def add_admin_tab(self) -> None:
         """Dynamically add an Admin tab (for moderators/admins)."""
@@ -176,11 +171,10 @@ class CapiHeaterApp:
             if not auth or not session:
                 return
 
-            frame = ttk.Frame(self.notebook, style="Tab.TFrame")
-            admin = AdminTab(frame, auth=auth, session=session)
-            admin.pack(fill=tk.BOTH, expand=True)
-            self.notebook.add(frame, text="  Admin  ")
+            admin = AdminTab(auth=auth, session=session)
+            self._tab_widget.addTab(admin, "  Admin  ")
             self._tabs["Admin"] = admin
+            self._tab_names.append("Admin")
         except Exception as exc:
             logger.warning(f"Could not load admin tab: {exc}")
 
@@ -197,14 +191,8 @@ class CapiHeaterApp:
             except Exception:
                 break
 
-        self.root.after(POLL_INTERVAL_MS, self._poll_queue)
-
     def _handle_message(self, msg: dict) -> None:
-        """Process a single message from the engine/workers.
-
-        Worker messages use the key ``event`` with values like
-        ``status``, ``schedule``, ``action_complete``.
-        """
+        """Process a single message from the engine/workers."""
         event = msg.get("event", "")
 
         if event == "status":
@@ -225,9 +213,10 @@ class CapiHeaterApp:
             username = msg.get("username", "")
             if warning_msg:
                 self.set_status(f"Aviso ({username}): {warning_msg}")
-                messagebox.showwarning(
+                QMessageBox.warning(
+                    self,
                     "Aviso - CapiHeater",
-                    f"Conta @{username}:\n\n{warning_msg}"
+                    f"Conta @{username}:\n\n{warning_msg}",
                 )
 
         # Refresh dashboard on any message
@@ -239,25 +228,28 @@ class CapiHeaterApp:
     # Tab change handler
     # ==================================================================
 
-    def _on_tab_changed(self, _event=None) -> None:
+    def _on_tab_changed(self, index: int) -> None:
         """Refresh the active tab when the user switches to it."""
-        try:
-            idx = self.notebook.index(self.notebook.select())
-            tab_name = self.notebook.tab(idx, "text").strip()
+        if 0 <= index < len(self._tab_names):
+            tab_name = self._tab_names[index]
             tab = self._tabs.get(tab_name)
             if tab and hasattr(tab, "refresh"):
                 tab.refresh()
-        except Exception:
-            pass
 
     # ==================================================================
     # Logout
     # ==================================================================
 
     def _on_logout(self) -> None:
-        """Log out: clear saved credentials, stop workers, and restart the app."""
-        from tkinter import messagebox
-        if not messagebox.askyesno("Sair", "Deseja sair da conta atual?"):
+        """Log out: clear saved credentials, stop workers, and close."""
+        reply = QMessageBox.question(
+            self,
+            "Sair",
+            "Deseja sair da conta atual?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
             return
 
         # Stop all workers
@@ -267,7 +259,6 @@ class CapiHeaterApp:
             pass
 
         # Clear saved credentials (remember-me)
-        import os
         app_data = os.path.join(
             os.environ.get("APPDATA", os.path.expanduser("~")), "CapiHeater"
         )
@@ -279,10 +270,12 @@ class CapiHeaterApp:
                 except Exception:
                     pass
 
-        # Close the app — next time it opens, login screen will appear
-        from tkinter import messagebox as mb2
-        mb2.showinfo("Logout", "Voce foi desconectado.\nAbra o app novamente para fazer login.")
-        self.root.destroy()
+        QMessageBox.information(
+            self,
+            "Logout",
+            "Voce foi desconectado.\nAbra o app novamente para fazer login.",
+        )
+        self.close()
 
     # ==================================================================
     # Auto-update
@@ -301,7 +294,7 @@ class CapiHeaterApp:
         except Exception:
             return
         if info:
-            self.root.after(0, lambda: self._prompt_update(info))
+            self._sig_prompt_update.emit(info)
 
     def _prompt_update(self, info: dict) -> None:
         version = info["version"]
@@ -311,40 +304,45 @@ class CapiHeaterApp:
             msg += f"\n\n{notes}"
         msg += "\n\nDeseja atualizar agora?"
 
-        if not messagebox.askyesno("Atualização", msg):
+        reply = QMessageBox.question(
+            self,
+            "Atualização",
+            msg,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
             return
 
         self._start_update_download(info["download_url"], info.get("size", 0))
 
     def _start_update_download(self, download_url: str, expected_size: int = 0) -> None:
-        # Build a small progress window
-        win = tk.Toplevel(self.root)
-        win.title("Atualizando...")
-        win.geometry("400x120")
-        win.resizable(False, False)
-        win.configure(bg=BG_DARK)
-        win.transient(self.root)
-        win.grab_set()
+        # Build a progress dialog
+        self._update_dlg = QDialog(self)
+        self._update_dlg.setWindowTitle("Atualizando...")
+        self._update_dlg.setFixedSize(400, 120)
+        self._update_dlg.setModal(True)
 
-        ttk.Label(
-            win, text="Baixando atualização...", style="Dark.TLabel",
-        ).pack(pady=(16, 4))
+        dlg_layout = QVBoxLayout(self._update_dlg)
+        dlg_layout.setContentsMargins(16, 16, 16, 16)
 
-        progress_var = tk.DoubleVar(value=0.0)
-        bar = ttk.Progressbar(
-            win,
-            variable=progress_var,
-            maximum=100,
-            mode="determinate",
-            style="Card.Horizontal.TProgressbar",
-            length=350,
-        )
-        bar.pack(pady=8)
+        dlg_layout.addWidget(QLabel("Baixando atualização..."))
+
+        self._update_bar = QProgressBar()
+        self._update_bar.setRange(0, 100)
+        self._update_bar.setValue(0)
+        dlg_layout.addWidget(self._update_bar)
+
+        self._update_dlg.show()
+
+        # Connect progress signal
+        self._sig_update_progress.connect(self._update_bar.setValue)
+        self._sig_update_done.connect(self._update_dlg.accept)
 
         def on_progress(downloaded: int, total: int) -> None:
             if total > 0:
                 pct = downloaded / total * 100
-                self.root.after(0, lambda p=pct: progress_var.set(p))
+                self._sig_update_progress.emit(int(pct))
 
         def worker() -> None:
             from utils.updater import AutoUpdater
@@ -356,19 +354,20 @@ class CapiHeaterApp:
                     on_progress=on_progress,
                     expected_size=expected_size,
                 )
+                self._sig_update_done.emit()
             except Exception as exc:
-                self.root.after(
-                    0,
-                    lambda: (
-                        win.destroy(),
-                        messagebox.showerror(
-                            "Erro",
-                            f"Falha ao baixar atualização:\n{exc}",
-                        ),
-                    ),
-                )
+                self._sig_update_error.emit(str(exc))
 
         threading.Thread(target=worker, daemon=True).start()
+
+    def _on_update_error(self, error_msg: str) -> None:
+        if hasattr(self, "_update_dlg"):
+            self._update_dlg.close()
+        QMessageBox.critical(
+            self,
+            "Erro",
+            f"Falha ao baixar atualização:\n{error_msg}",
+        )
 
     # ==================================================================
     # Public helpers
@@ -376,172 +375,14 @@ class CapiHeaterApp:
 
     def set_status(self, text: str) -> None:
         """Update the status bar text."""
-        self._status_var.set(text)
-
-    def run(self) -> None:
-        """Start the Tkinter main loop."""
-        logger.info("GUI started")
-        self.root.mainloop()
-
-    # ==================================================================
-    # Styling
-    # ==================================================================
-
-    def _configure_styles(self) -> None:
-        style = ttk.Style(self.root)
-
-        # Combobox dropdown list colors (Tk option database)
-        self.root.option_add("*TCombobox*Listbox.background", BG_INPUT)
-        self.root.option_add("*TCombobox*Listbox.foreground", FG_TEXT)
-        self.root.option_add("*TCombobox*Listbox.selectBackground", ACCENT_HIGHLIGHT)
-        self.root.option_add("*TCombobox*Listbox.selectForeground", FG_TEXT)
-        style.theme_use("clam")
-
-        # ----- General -----
-        style.configure(".", background=BG_DARK, foreground=FG_TEXT, font=("Segoe UI", 10))
-
-        # ----- TNotebook -----
-        style.configure(
-            "Dark.TNotebook",
-            background=BG_DARK,
-            borderwidth=0,
-        )
-        style.configure(
-            "Dark.TNotebook.Tab",
-            background=BG_SECONDARY,
-            foreground=FG_MUTED,
-            padding=[14, 6],
-            font=("Segoe UI", 10),
-        )
-        style.map(
-            "Dark.TNotebook.Tab",
-            background=[("selected", BG_ACCENT)],
-            foreground=[("selected", FG_TITLE)],
-        )
-
-        # ----- TFrame -----
-        style.configure("Tab.TFrame", background=BG_DARK)
-        style.configure("Card.TFrame", background=BG_SECONDARY, relief="flat")
-        style.configure("Dark.TFrame", background=BG_DARK)
-
-        # ----- TLabel -----
-        style.configure("Dark.TLabel", background=BG_DARK, foreground=FG_TEXT)
-        style.configure("Heading.TLabel", background=BG_DARK, foreground=FG_TITLE, font=("Segoe UI", 14, "bold"))
-        style.configure("CardTitle.TLabel", background=BG_SECONDARY, foreground=FG_TITLE, font=("Segoe UI", 10, "bold"))
-        style.configure("CardStatus.TLabel", background=BG_SECONDARY, foreground=FG_MUTED, font=("Segoe UI", 9))
-        style.configure("CardDetail.TLabel", background=BG_SECONDARY, foreground=FG_MUTED, font=("Segoe UI", 9))
-        style.configure("StatusBar.TLabel", background=BG_SECONDARY, foreground=FG_MUTED, font=("Segoe UI", 9), padding=[8, 4])
-        style.configure("OverviewValue.TLabel", background=BG_SECONDARY, foreground=FG_TITLE, font=("Segoe UI", 22, "bold"))
-        style.configure("OverviewCaption.TLabel", background=BG_SECONDARY, foreground=FG_MUTED, font=("Segoe UI", 9))
-
-        # ----- TButton -----
-        style.configure(
-            "Accent.TButton",
-            background=ACCENT_HIGHLIGHT,
-            foreground=FG_TITLE,
-            font=("Segoe UI", 10),
-            padding=[12, 6],
-        )
-        style.map(
-            "Accent.TButton",
-            background=[("active", BG_ACCENT)],
-        )
-        style.configure(
-            "Danger.TButton",
-            background=COLOR_ERROR,
-            foreground=FG_TITLE,
-            font=("Segoe UI", 10),
-            padding=[12, 6],
-        )
-        style.map(
-            "Danger.TButton",
-            background=[("active", "#d50000")],
-        )
-
-        # ----- Treeview -----
-        style.configure(
-            "Dark.Treeview",
-            background=BG_SECONDARY,
-            foreground=FG_TEXT,
-            fieldbackground=BG_SECONDARY,
-            borderwidth=0,
-            font=("Segoe UI", 10),
-            rowheight=28,
-        )
-        style.configure(
-            "Dark.Treeview.Heading",
-            background=BG_ACCENT,
-            foreground=FG_TITLE,
-            font=("Segoe UI", 10, "bold"),
-        )
-        style.map(
-            "Dark.Treeview",
-            background=[("selected", ACCENT_HIGHLIGHT)],
-            foreground=[("selected", FG_TITLE)],
-        )
-
-        # ----- TEntry / TSpinbox -----
-        style.configure(
-            "Dark.TEntry",
-            fieldbackground=BG_INPUT,
-            foreground=FG_TEXT,
-            insertcolor=FG_TEXT,
-        )
-        style.configure(
-            "Dark.TSpinbox",
-            fieldbackground=BG_INPUT,
-            foreground=FG_TEXT,
-        )
-        style.configure(
-            "Dark.TCombobox",
-            fieldbackground=BG_INPUT,
-            foreground=FG_TEXT,
-            selectbackground=ACCENT_HIGHLIGHT,
-            selectforeground=FG_TEXT,
-        )
-        style.map(
-            "Dark.TCombobox",
-            fieldbackground=[("readonly", BG_INPUT), ("disabled", BG_SECONDARY)],
-            foreground=[("readonly", FG_TEXT), ("disabled", FG_MUTED)],
-            selectbackground=[("readonly", BG_INPUT)],
-            selectforeground=[("readonly", FG_TEXT)],
-        )
-
-        # ----- Progressbar -----
-        style.configure(
-            "Card.Horizontal.TProgressbar",
-            troughcolor=BG_DARK,
-            background=ACCENT_HIGHLIGHT,
-            thickness=6,
-        )
-
-        # ----- TCheckbutton -----
-        style.configure(
-            "Dark.TCheckbutton",
-            background=BG_DARK,
-            foreground=FG_TEXT,
-        )
-
-        # ----- TLabelframe -----
-        style.configure(
-            "Dark.TLabelframe",
-            background=BG_DARK,
-            foreground=FG_TEXT,
-        )
-        style.configure(
-            "Dark.TLabelframe.Label",
-            background=BG_DARK,
-            foreground=FG_TITLE,
-            font=("Segoe UI", 10, "bold"),
-        )
+        self._status_label.setText(text)
 
     # ==================================================================
     # Window helpers
     # ==================================================================
 
     def _center_window(self, width: int, height: int) -> None:
-        screen_w = self.root.winfo_screenwidth()
-        screen_h = self.root.winfo_screenheight()
-        x = (screen_w - width) // 2
-        y = (screen_h - height) // 2
-        self.root.geometry(f"{width}x{height}+{x}+{y}")
+        screen = self.screen().geometry()
+        x = (screen.width() - width) // 2
+        y = (screen.height() - height) // 2
+        self.move(x, y)

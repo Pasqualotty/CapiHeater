@@ -2,20 +2,24 @@
 AccountCard - Compact card widget showing account summary.
 """
 
-import tkinter as tk
-from tkinter import ttk
+from PySide6.QtWidgets import (
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QProgressBar,
+    QVBoxLayout,
+)
 
+from gui.theme import FG_MUTED, FG_TITLE
 from gui.widgets.status_indicator import StatusIndicator
 
 
-class AccountCard(ttk.Frame):
+class AccountCard(QFrame):
     """Displays a single account's username, status, day progress, and a mini
     progress bar.
 
     Parameters
     ----------
-    parent : tk.Widget
-        Parent widget.
     account : dict
         Account dictionary from the database (must contain ``username``,
         ``status``, ``current_day``, ``schedule_id``).
@@ -23,63 +27,55 @@ class AccountCard(ttk.Frame):
         Total number of days in the schedule (used for progress bar).
     """
 
-    def __init__(self, parent, account: dict, total_days: int = 14, **kwargs):
-        super().__init__(parent, style="Card.TFrame", **kwargs)
+    def __init__(self, parent=None, account: dict | None = None, total_days: int = 14):
+        super().__init__(parent)
+        if account is None:
+            account = {}
 
+        self.setObjectName("card")
         self._account = account
         self._total_days = total_days
 
-        # --- Row 0: indicator + username ---
-        top_frame = ttk.Frame(self, style="Card.TFrame")
-        top_frame.pack(fill=tk.X, padx=6, pady=(6, 2))
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(6, 6, 6, 6)
+        layout.setSpacing(2)
+
+        # --- Row 0: indicator + username + status ---
+        top_layout = QHBoxLayout()
+        top_layout.setSpacing(6)
 
         self._indicator = StatusIndicator(
-            top_frame,
+            self,
             status=account.get("status", "idle"),
             size=10,
         )
-        self._indicator.pack(side=tk.LEFT, padx=(0, 6))
+        top_layout.addWidget(self._indicator)
 
-        self._lbl_username = ttk.Label(
-            top_frame,
-            text=f"@{account.get('username', '???')}",
-            style="CardTitle.TLabel",
-        )
-        self._lbl_username.pack(side=tk.LEFT)
+        self._lbl_username = QLabel(f"@{account.get('username', '???')}")
+        self._lbl_username.setStyleSheet(f"color: {FG_TITLE}; font-weight: bold;")
+        top_layout.addWidget(self._lbl_username)
 
-        self._lbl_status = ttk.Label(
-            top_frame,
-            text=self._status_text(account.get("status", "idle")),
-            style="CardStatus.TLabel",
-        )
-        self._lbl_status.pack(side=tk.RIGHT)
+        top_layout.addStretch()
+
+        self._lbl_status = QLabel(self._status_text(account.get("status", "idle")))
+        self._lbl_status.setStyleSheet(f"color: {FG_MUTED}; font-size: 9pt;")
+        top_layout.addWidget(self._lbl_status)
+
+        layout.addLayout(top_layout)
 
         # --- Row 1: day progress ---
         day = account.get("current_day", 1)
-        progress_frame = ttk.Frame(self, style="Card.TFrame")
-        progress_frame.pack(fill=tk.X, padx=6, pady=(0, 2))
-
-        self._lbl_day = ttk.Label(
-            progress_frame,
-            text=f"Dia {day}/{total_days}",
-            style="CardDetail.TLabel",
-        )
-        self._lbl_day.pack(side=tk.LEFT)
+        self._lbl_day = QLabel(f"Dia {day}/{total_days}")
+        self._lbl_day.setStyleSheet(f"color: {FG_MUTED}; font-size: 9pt;")
+        layout.addWidget(self._lbl_day)
 
         # --- Row 2: progress bar ---
-        bar_frame = ttk.Frame(self, style="Card.TFrame")
-        bar_frame.pack(fill=tk.X, padx=6, pady=(0, 6))
-
-        self._progress = ttk.Progressbar(
-            bar_frame,
-            orient=tk.HORIZONTAL,
-            length=160,
-            mode="determinate",
-            maximum=total_days,
-            value=day,
-            style="Card.Horizontal.TProgressbar",
-        )
-        self._progress.pack(fill=tk.X)
+        self._progress = QProgressBar()
+        self._progress.setRange(0, total_days)
+        self._progress.setValue(day)
+        self._progress.setTextVisible(False)
+        self._progress.setFixedHeight(6)
+        layout.addWidget(self._progress)
 
     # ------------------------------------------------------------------
     # Public helpers
@@ -95,10 +91,11 @@ class AccountCard(ttk.Frame):
         day = account.get("current_day", 1)
 
         self._indicator.set_status(status)
-        self._lbl_username.config(text=f"@{account.get('username', '???')}")
-        self._lbl_status.config(text=self._status_text(status))
-        self._lbl_day.config(text=f"Dia {day}/{self._total_days}")
-        self._progress.config(value=day, maximum=self._total_days)
+        self._lbl_username.setText(f"@{account.get('username', '???')}")
+        self._lbl_status.setText(self._status_text(status))
+        self._lbl_day.setText(f"Dia {day}/{self._total_days}")
+        self._progress.setMaximum(self._total_days)
+        self._progress.setValue(day)
 
     # ------------------------------------------------------------------
     # Internals

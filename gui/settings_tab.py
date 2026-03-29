@@ -3,19 +3,34 @@ SettingsTab - Application settings with persistence.
 """
 
 import json
-import tkinter as tk
-from tkinter import ttk, messagebox
 
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import (
+    QCheckBox,
+    QComboBox,
+    QDoubleSpinBox,
+    QFormLayout,
+    QGroupBox,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QMessageBox,
+    QPushButton,
+    QScrollArea,
+    QSpinBox,
+    QVBoxLayout,
+    QWidget,
+)
+
+from gui.base import BaseTab
 from utils.config import DEFAULT_SCROLL_CONFIG, SCROLL_PRESETS
 
 
-class SettingsTab(ttk.Frame):
+class SettingsTab(BaseTab):
     """Settings tab for configuring application-wide preferences.
 
     Parameters
     ----------
-    parent : tk.Widget
-        Parent frame (notebook tab container).
     app : CapiHeaterApp
         Reference to the main application instance.
     """
@@ -48,11 +63,9 @@ class SettingsTab(ttk.Frame):
         ("hover_chance", "Chance de hover", "0-1", True),
     ]
 
-    def __init__(self, parent, app, **kwargs):
-        super().__init__(parent, style="Tab.TFrame", **kwargs)
-        self.app = app
-        self._scroll_vars: dict[str, tk.StringVar] = {}
-        self._scroll_widgets: list[tk.Widget] = []
+    def __init__(self, app, parent=None):
+        super().__init__(app, parent)
+        self._scroll_spins: dict[str, QDoubleSpinBox | QSpinBox] = {}
         self._build_ui()
         self._load_settings()
 
@@ -61,194 +74,156 @@ class SettingsTab(ttk.Frame):
     # ==================================================================
 
     def _build_ui(self) -> None:
-        # Scrollable canvas for all content
-        canvas = tk.Canvas(self, bg="#0a1628", highlightthickness=0)
-        scrollbar = ttk.Scrollbar(self, orient=tk.VERTICAL, command=canvas.yview)
-        self._inner = ttk.Frame(canvas, style="Dark.TFrame")
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
 
-        self._inner.bind(
-            "<Configure>",
-            lambda e: canvas.configure(scrollregion=canvas.bbox("all")),
-        )
-        canvas.create_window((0, 0), window=self._inner, anchor="nw")
-        canvas.configure(yscrollcommand=scrollbar.set)
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setFrameShape(QScrollArea.Shape.NoFrame)
+        outer.addWidget(scroll_area)
 
-        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        container = QWidget()
+        scroll_area.setWidget(container)
 
-        # Enable mouse wheel scrolling only when mouse is over this tab
-        def _on_mousewheel(event):
-            canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
-
-        def _bind_mousewheel(_event=None):
-            canvas.bind_all("<MouseWheel>", _on_mousewheel)
-
-        def _unbind_mousewheel(_event=None):
-            canvas.unbind_all("<MouseWheel>")
-
-        canvas.bind("<Enter>", _bind_mousewheel)
-        canvas.bind("<Leave>", _unbind_mousewheel)
+        layout = QVBoxLayout(container)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(12)
 
         # Header
-        header = ttk.Frame(self._inner, style="Dark.TFrame")
-        header.pack(fill=tk.X, padx=12, pady=(12, 6))
-        ttk.Label(header, text="Configuracoes", style="Heading.TLabel").pack(side=tk.LEFT)
+        header_lbl = QLabel("Configuracoes")
+        header_lbl.setStyleSheet("font-size: 13pt; font-weight: bold;")
+        layout.addWidget(header_lbl)
 
-        # Settings form
-        form = ttk.LabelFrame(self._inner, text="Geral", style="Dark.TLabelframe")
-        form.pack(fill=tk.X, padx=12, pady=12)
-
-        pad = {"padx": 12, "pady": 6}
+        # ---- General settings group ----
+        general_group = QGroupBox("Geral")
+        general_form = QFormLayout(general_group)
+        general_form.setContentsMargins(12, 16, 12, 12)
+        general_form.setSpacing(8)
 
         # Max concurrent workers
-        row0 = ttk.Frame(form, style="Dark.TFrame")
-        row0.pack(fill=tk.X, **pad)
-        ttk.Label(row0, text="Workers simultaneos (max):", style="Dark.TLabel").pack(side=tk.LEFT)
-        self._spin_workers = ttk.Spinbox(
-            row0,
-            from_=1,
-            to=10,
-            width=5,
-            style="Dark.TSpinbox",
-        )
-        self._spin_workers.pack(side=tk.RIGHT)
+        self._spin_workers = QSpinBox()
+        self._spin_workers.setRange(1, 10)
+        self._spin_workers.setValue(3)
+        general_form.addRow("Workers simultaneos (max):", self._spin_workers)
 
         # Headless mode
-        row1 = ttk.Frame(form, style="Dark.TFrame")
-        row1.pack(fill=tk.X, **pad)
-        self._headless_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(
-            row1,
-            text="Modo headless (navegador invisivel)",
-            variable=self._headless_var,
-            style="Dark.TCheckbutton",
-        ).pack(side=tk.LEFT)
+        self._headless_cb = QCheckBox("Modo headless (navegador invisivel)")
+        general_form.addRow(self._headless_cb)
 
         # Default proxy
-        row2 = ttk.Frame(form, style="Dark.TFrame")
-        row2.pack(fill=tk.X, **pad)
-        ttk.Label(row2, text="Proxy padrao:", style="Dark.TLabel").pack(side=tk.LEFT)
-        self._ent_proxy = ttk.Entry(row2, style="Dark.TEntry", width=32)
-        self._ent_proxy.pack(side=tk.RIGHT)
+        self._ent_proxy = QLineEdit()
+        self._ent_proxy.setPlaceholderText("socks5://ip:porta ou http://ip:porta")
+        general_form.addRow("Proxy padrao:", self._ent_proxy)
 
         # Log level
-        row3 = ttk.Frame(form, style="Dark.TFrame")
-        row3.pack(fill=tk.X, **pad)
-        ttk.Label(row3, text="Nivel de log:", style="Dark.TLabel").pack(side=tk.LEFT)
-        self._combo_log = ttk.Combobox(
-            row3,
-            values=["DEBUG", "INFO", "WARNING", "ERROR"],
-            state="readonly",
-            style="Dark.TCombobox",
-            width=12,
-        )
-        self._combo_log.pack(side=tk.RIGHT)
+        self._combo_log = QComboBox()
+        self._combo_log.addItems(["DEBUG", "INFO", "WARNING", "ERROR"])
+        self._combo_log.setCurrentText("INFO")
+        general_form.addRow("Nivel de log:", self._combo_log)
 
-        # ==============================================================
-        # Advanced scroll configuration
-        # ==============================================================
-        scroll_frame = ttk.LabelFrame(
-            self._inner, text="Rolagem Avancada", style="Dark.TLabelframe"
-        )
-        scroll_frame.pack(fill=tk.X, padx=12, pady=(0, 12))
+        layout.addWidget(general_group)
+
+        # ---- Advanced scroll configuration ----
+        scroll_group = QGroupBox("Rolagem Avancada")
+        scroll_layout = QVBoxLayout(scroll_group)
+        scroll_layout.setContentsMargins(12, 16, 12, 12)
+        scroll_layout.setSpacing(8)
 
         # Preset selector
-        preset_row = ttk.Frame(scroll_frame, style="Dark.TFrame")
-        preset_row.pack(fill=tk.X, **pad)
-        ttk.Label(preset_row, text="Perfil de rolagem:", style="Dark.TLabel").pack(side=tk.LEFT)
-
+        preset_row = QHBoxLayout()
+        preset_row.addWidget(QLabel("Perfil de rolagem:"))
         preset_names = list(SCROLL_PRESETS.keys()) + ["Personalizado"]
-        self._combo_preset = ttk.Combobox(
-            preset_row,
-            values=preset_names,
-            state="readonly",
-            style="Dark.TCombobox",
-            width=16,
-        )
-        self._combo_preset.set("Normal")
-        self._combo_preset.pack(side=tk.RIGHT)
-        self._combo_preset.bind("<<ComboboxSelected>>", self._on_preset_changed)
+        self._combo_preset = QComboBox()
+        self._combo_preset.addItems(preset_names)
+        self._combo_preset.setCurrentText("Normal")
+        self._combo_preset.currentTextChanged.connect(self._on_preset_changed)
+        preset_row.addWidget(self._combo_preset)
+        preset_row.addStretch()
+        scroll_layout.addLayout(preset_row)
 
-        # Scroll config fields (two columns)
-        fields_frame = ttk.Frame(scroll_frame, style="Dark.TFrame")
-        fields_frame.pack(fill=tk.X, padx=12, pady=6)
-
-        # Create a grid of fields
+        # Scroll config fields — two-column grid
+        fields_layout = QHBoxLayout()
         half = len(self._SCROLL_FIELDS) // 2 + len(self._SCROLL_FIELDS) % 2
-        left_col = ttk.Frame(fields_frame, style="Dark.TFrame")
-        left_col.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 6))
-        right_col = ttk.Frame(fields_frame, style="Dark.TFrame")
-        right_col.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(6, 0))
+
+        left_form = QFormLayout()
+        left_form.setSpacing(4)
+        right_form = QFormLayout()
+        right_form.setSpacing(4)
 
         for idx, (key, label, unit, is_float) in enumerate(self._SCROLL_FIELDS):
-            parent_col = left_col if idx < half else right_col
-            row = ttk.Frame(parent_col, style="Dark.TFrame")
-            row.pack(fill=tk.X, pady=2)
+            form = left_form if idx < half else right_form
 
-            var = tk.StringVar(value=str(DEFAULT_SCROLL_CONFIG[key]))
-            self._scroll_vars[key] = var
+            if is_float:
+                spin = QDoubleSpinBox()
+                spin.setRange(0.0, 999.0)
+                spin.setDecimals(1)
+                spin.setSingleStep(0.1)
+                spin.setValue(float(DEFAULT_SCROLL_CONFIG[key]))
+            else:
+                spin = QSpinBox()
+                spin.setRange(0, 9999)
+                spin.setValue(int(DEFAULT_SCROLL_CONFIG[key]))
 
-            ttk.Label(row, text=f"{label} ({unit}):", style="Dark.TLabel").pack(side=tk.LEFT)
-            spin = ttk.Spinbox(
-                row,
-                from_=0,
-                to=9999 if not is_float else 999.0,
-                width=6,
-                textvariable=var,
-                style="Dark.TSpinbox",
-                increment=0.1 if is_float else 1,
-            )
-            spin.pack(side=tk.RIGHT)
-            self._scroll_widgets.append(spin)
+            spin.setMinimumWidth(70)
+            self._scroll_spins[key] = spin
+            form.addRow(f"{label} ({unit}):", spin)
+
+        left_widget = QWidget()
+        left_widget.setLayout(left_form)
+        right_widget = QWidget()
+        right_widget.setLayout(right_form)
+
+        fields_layout.addWidget(left_widget)
+        fields_layout.addWidget(right_widget)
+        scroll_layout.addLayout(fields_layout)
 
         # Restore defaults button
-        btn_row = ttk.Frame(scroll_frame, style="Dark.TFrame")
-        btn_row.pack(fill=tk.X, **pad)
-        ttk.Button(
-            btn_row, text="Restaurar Padrao", style="Accent.TButton",
-            command=self._restore_scroll_defaults,
-        ).pack(side=tk.LEFT)
+        btn_restore = QPushButton("Restaurar Padrao")
+        btn_restore.setObjectName("accent")
+        btn_restore.clicked.connect(self._restore_scroll_defaults)
+        scroll_layout.addWidget(btn_restore, alignment=Qt.AlignmentFlag.AlignLeft)
 
-        # Save button
-        btn_frame = ttk.Frame(self._inner, style="Dark.TFrame")
-        btn_frame.pack(fill=tk.X, padx=12, pady=12)
-        ttk.Button(btn_frame, text="Salvar Configuracoes", style="Accent.TButton", command=self._save_settings).pack(side=tk.LEFT)
+        layout.addWidget(scroll_group)
+
+        # ---- Save button ----
+        btn_save = QPushButton("Salvar Configuracoes")
+        btn_save.setObjectName("accent")
+        btn_save.clicked.connect(self._save_settings)
+        layout.addWidget(btn_save, alignment=Qt.AlignmentFlag.AlignLeft)
+
+        layout.addStretch()
 
     # ==================================================================
     # Scroll preset handling
     # ==================================================================
 
-    def _on_preset_changed(self, _event=None) -> None:
-        preset_name = self._combo_preset.get()
+    def _on_preset_changed(self, preset_name: str) -> None:
         if preset_name == "Personalizado":
-            return  # Keep current values, let user edit freely
-
+            return
         preset_data = SCROLL_PRESETS.get(preset_name)
         config = preset_data if preset_data else DEFAULT_SCROLL_CONFIG
-        for key, var in self._scroll_vars.items():
-            var.set(str(config[key]))
+        self._set_scroll_config(config)
 
     def _restore_scroll_defaults(self) -> None:
-        self._combo_preset.set("Normal")
-        for key, var in self._scroll_vars.items():
-            var.set(str(DEFAULT_SCROLL_CONFIG[key]))
+        self._combo_preset.setCurrentText("Normal")
+        self._set_scroll_config(DEFAULT_SCROLL_CONFIG)
 
     def _get_scroll_config(self) -> dict:
         """Read current scroll config from the form."""
         config = {}
         for key, label, unit, is_float in self._SCROLL_FIELDS:
-            try:
-                val = self._scroll_vars[key].get()
-                config[key] = float(val) if is_float else int(float(val))
-            except (ValueError, KeyError):
+            spin = self._scroll_spins.get(key)
+            if spin is None:
                 config[key] = DEFAULT_SCROLL_CONFIG[key]
+                continue
+            config[key] = spin.value()
         return config
 
     def _set_scroll_config(self, config: dict) -> None:
         """Populate scroll form fields from a config dict."""
-        for key, var in self._scroll_vars.items():
+        for key, spin in self._scroll_spins.items():
             if key in config:
-                var.set(str(config[key]))
+                spin.setValue(float(config[key]) if isinstance(spin, QDoubleSpinBox) else int(config[key]))
 
     # ==================================================================
     # Persistence
@@ -270,18 +245,19 @@ class SettingsTab(ttk.Frame):
     def _load_settings(self) -> None:
         """Load settings from database and populate the form."""
         workers = self._get_setting("max_workers", "3")
-        self._spin_workers.delete(0, tk.END)
-        self._spin_workers.insert(0, workers)
+        try:
+            self._spin_workers.setValue(int(workers))
+        except ValueError:
+            self._spin_workers.setValue(3)
 
         headless = self._get_setting("headless", "0")
-        self._headless_var.set(headless == "1")
+        self._headless_cb.setChecked(headless == "1")
 
         proxy = self._get_setting("default_proxy", "")
-        self._ent_proxy.delete(0, tk.END)
-        self._ent_proxy.insert(0, proxy)
+        self._ent_proxy.setText(proxy)
 
         log_level = self._get_setting("log_level", "INFO")
-        self._combo_log.set(log_level)
+        self._combo_log.setCurrentText(log_level)
 
         # Load scroll config
         scroll_json = self._get_setting("scroll_config", "")
@@ -296,22 +272,18 @@ class SettingsTab(ttk.Frame):
                     if all(str(saved.get(k)) == str(ref.get(k)) for k in DEFAULT_SCROLL_CONFIG):
                         preset_match = name
                         break
-                self._combo_preset.set(preset_match)
+                self._combo_preset.setCurrentText(preset_match)
             except (json.JSONDecodeError, TypeError):
                 pass
 
     def _save_settings(self) -> None:
         """Persist current form values to the settings table."""
-        try:
-            workers = int(self._spin_workers.get())
-            workers = max(1, min(10, workers))
-        except ValueError:
-            workers = 3
+        workers = self._spin_workers.value()
 
         self._set_setting("max_workers", str(workers))
-        self._set_setting("headless", "1" if self._headless_var.get() else "0")
-        self._set_setting("default_proxy", self._ent_proxy.get().strip())
-        self._set_setting("log_level", self._combo_log.get())
+        self._set_setting("headless", "1" if self._headless_cb.isChecked() else "0")
+        self._set_setting("default_proxy", self._ent_proxy.text().strip())
+        self._set_setting("log_level", self._combo_log.currentText())
 
         # Save scroll config
         scroll_config = self._get_scroll_config()
@@ -321,4 +293,4 @@ class SettingsTab(ttk.Frame):
         self.app.engine.max_concurrent = workers
 
         self.app.set_status("Configuracoes salvas com sucesso")
-        messagebox.showinfo("Sucesso", "Configuracoes salvas com sucesso.", parent=self)
+        QMessageBox.information(self, "Sucesso", "Configuracoes salvas com sucesso.")

@@ -5,8 +5,6 @@ Entry point for the application.
 
 import sys
 import os
-import tkinter as tk
-from tkinter import messagebox
 
 # Ensure project root is on the path — works both from source and from
 # a PyInstaller --onefile bundle (where _MEIPASS is the temp directory).
@@ -72,69 +70,54 @@ def _migrate_old_data():
                     pass
 
 
-def _launch_app(auth_session: dict | None = None):
-    """Launch the main CapiHeater GUI.
-
-    Parameters
-    ----------
-    auth_session : dict | None
-        ``{"role": "user|moderator|admin", ...}`` when Supabase is configured.
-        ``None`` in dev-mode (no auth).
-    """
-    from gui.app import CapiHeaterApp
-
-    app = CapiHeaterApp(auth_session=auth_session)
-    app.run()
-
-
 def main():
+    from PySide6.QtWidgets import QApplication, QMessageBox
+
     _cleanup_update_leftovers()
     _migrate_old_data()
 
     logger = get_logger(__name__)
     logger.info(f"Starting {APP_NAME} v{__version__}")
 
+    app = QApplication(sys.argv)
+
+    # Apply global dark theme
+    from gui.theme import QSS
+    app.setStyleSheet(QSS)
+
     # Check if Supabase is configured
     try:
         from auth.supabase_client import SupabaseAuth
     except ImportError:
         logger.warning("supabase package not installed - running in dev mode.")
-        _root = tk.Tk()
-        _root.withdraw()
-        messagebox.showwarning(
+        QMessageBox.warning(
+            None,
             "Modo Desenvolvimento",
             "O pacote 'supabase' nao esta instalado.\n"
             "O aplicativo sera iniciado sem autenticacao (modo dev).",
         )
-        _root.destroy()
-        _launch_app()
+        _launch_app(app, auth_session=None)
         return
 
     if not SupabaseAuth.is_configured():
-        # Dev mode: Supabase placeholders still in place
         logger.warning("Supabase not configured - running in dev mode.")
-
-        _root = tk.Tk()
-        _root.withdraw()
-        messagebox.showwarning(
+        QMessageBox.warning(
+            None,
             "Modo Desenvolvimento",
             "As credenciais do Supabase nao estao configuradas.\n"
             "O aplicativo sera iniciado sem autenticacao (modo dev).\n\n"
             "Para ativar a autenticacao, edite auth/supabase_client.py "
             "com as credenciais do seu projeto Supabase.",
         )
-        _root.destroy()
-
-        _launch_app()
+        _launch_app(app, auth_session=None)
         return
 
     # --- Normal auth flow -------------------------------------------------
     from gui.login_window import LoginWindow
+    from PySide6.QtWidgets import QDialog
 
     login = LoginWindow()
-    login.mainloop()
-
-    if not login.authenticated:
+    if login.exec() != QDialog.DialogCode.Accepted:
         logger.info("Login cancelled or failed. Exiting.")
         return
 
@@ -150,7 +133,16 @@ def main():
         "license_info": login.license_info,
     }
 
-    _launch_app(auth_session=auth_session)
+    _launch_app(app, auth_session=auth_session)
+
+
+def _launch_app(app: "QApplication", auth_session: dict | None = None):
+    """Launch the main CapiHeater GUI."""
+    from gui.app import CapiHeaterApp
+
+    window = CapiHeaterApp(auth_session=auth_session)
+    window.show()
+    sys.exit(app.exec())
 
 
 if __name__ == "__main__":

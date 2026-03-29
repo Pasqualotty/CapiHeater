@@ -2,8 +2,18 @@
 DocsTab - Built-in documentation viewer for CapiHeater.
 """
 
-import tkinter as tk
-from tkinter import ttk
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import (
+    QLabel,
+    QListWidget,
+    QSplitter,
+    QTextBrowser,
+    QVBoxLayout,
+    QWidget,
+)
+
+from gui.base import BaseTab
+from gui.theme import BG_INPUT, BG_SECONDARY, FG_TITLE
 
 
 # ======================================================================
@@ -474,20 +484,18 @@ DOCS = [
 ]
 
 
-class DocsTab(ttk.Frame):
-    """Built-in documentation tab with scrollable content.
+class DocsTab(BaseTab):
+    """Built-in documentation tab with sidebar navigation and rich text display.
 
     Parameters
     ----------
-    parent : tk.Widget
-        Parent frame (notebook tab container).
     app : CapiHeaterApp
         Reference to the main application instance.
     """
 
-    def __init__(self, parent, app, **kwargs):
-        super().__init__(parent, style="Tab.TFrame", **kwargs)
-        self.app = app
+    def __init__(self, app, parent=None):
+        super().__init__(app, parent)
+        self._section_anchors: list[str] = []
         self._build_ui()
 
     # ==================================================================
@@ -495,113 +503,94 @@ class DocsTab(ttk.Frame):
     # ==================================================================
 
     def _build_ui(self) -> None:
-        # Main layout: sidebar + content
-        main = ttk.Frame(self, style="Dark.TFrame")
-        main.pack(fill=tk.BOTH, expand=True, padx=0, pady=0)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+
+        splitter = QSplitter(Qt.Orientation.Horizontal)
+        layout.addWidget(splitter)
 
         # --- Left sidebar (index) ---
-        sidebar = tk.Frame(main, bg="#16213e", width=220)
-        sidebar.pack(side=tk.LEFT, fill=tk.Y)
-        sidebar.pack_propagate(False)
+        sidebar = QWidget()
+        sidebar.setFixedWidth(220)
+        sidebar.setStyleSheet(f"background-color: {BG_SECONDARY};")
+        sidebar_layout = QVBoxLayout(sidebar)
+        sidebar_layout.setContentsMargins(8, 12, 8, 8)
+        sidebar_layout.setSpacing(8)
 
-        tk.Label(
-            sidebar, text="Indice", font=("Segoe UI", 12, "bold"),
-            bg="#16213e", fg="#ffffff",
-        ).pack(padx=12, pady=(12, 8), anchor="w")
+        index_title = QLabel("Indice")
+        index_title.setStyleSheet(f"font-size: 12pt; font-weight: bold; color: {FG_TITLE};")
+        sidebar_layout.addWidget(index_title)
 
-        self._index_listbox = tk.Listbox(
-            sidebar,
-            bg="#0d1b2a", fg="#e0e0e0",
-            selectbackground="#1a73e8", selectforeground="#ffffff",
-            relief="flat", highlightthickness=0,
-            font=("Segoe UI", 9),
-            activestyle="none",
-        )
-        self._index_listbox.pack(fill=tk.BOTH, expand=True, padx=8, pady=(0, 8))
-
+        self._index_list = QListWidget()
         for doc in DOCS:
-            self._index_listbox.insert(tk.END, doc["title"])
+            self._index_list.addItem(doc["title"])
+        self._index_list.currentRowChanged.connect(self._on_index_select)
+        sidebar_layout.addWidget(self._index_list)
 
-        self._index_listbox.bind("<<ListboxSelect>>", self._on_index_select)
+        splitter.addWidget(sidebar)
 
         # --- Right content area ---
-        content_frame = ttk.Frame(main, style="Dark.TFrame")
-        content_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        content = QWidget()
+        content_layout = QVBoxLayout(content)
+        content_layout.setContentsMargins(12, 12, 12, 12)
+        content_layout.setSpacing(6)
 
-        # Header
-        header = ttk.Frame(content_frame, style="Dark.TFrame")
-        header.pack(fill=tk.X, padx=12, pady=(12, 6))
-        ttk.Label(header, text="Documentacao do CapiHeater", style="Heading.TLabel").pack(side=tk.LEFT)
+        header_lbl = QLabel("Documentacao do CapiHeater")
+        header_lbl.setStyleSheet("font-size: 13pt; font-weight: bold;")
+        content_layout.addWidget(header_lbl)
 
-        # Scrollable text area
-        text_frame = tk.Frame(content_frame, bg="#1a1a2e")
-        text_frame.pack(fill=tk.BOTH, expand=True, padx=12, pady=(0, 12))
-
-        self._text = tk.Text(
-            text_frame,
-            bg="#0d1b2a", fg="#e0e0e0",
-            font=("Segoe UI", 10),
-            relief="flat",
-            highlightthickness=1,
-            highlightcolor="#0f3460",
-            wrap="word",
-            padx=16, pady=12,
-            cursor="arrow",
-            state="disabled",
+        self._browser = QTextBrowser()
+        self._browser.setOpenExternalLinks(False)
+        self._browser.setStyleSheet(
+            f"background-color: {BG_INPUT}; padding: 12px;"
         )
-        scrollbar = ttk.Scrollbar(text_frame, orient=tk.VERTICAL, command=self._text.yview)
-        self._text.configure(yscrollcommand=scrollbar.set)
-        self._text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        content_layout.addWidget(self._browser)
 
-        # Configure text tags
-        self._text.tag_configure("title", font=("Segoe UI", 14, "bold"), foreground="#ffffff",
-                                  spacing3=8)
-        self._text.tag_configure("section", font=("Segoe UI", 12, "bold"), foreground="#5588cc",
-                                  spacing1=16, spacing3=6)
-        self._text.tag_configure("body", font=("Segoe UI", 10), foreground="#e0e0e0",
-                                  spacing1=2, lmargin1=8, lmargin2=8)
-        self._text.tag_configure("separator", font=("Segoe UI", 4), foreground="#333355")
+        splitter.addWidget(content)
+        splitter.setStretchFactor(0, 0)
+        splitter.setStretchFactor(1, 1)
 
-        # Load all content
+        # Load content
         self._load_all_content()
 
         # Select first item
         if DOCS:
-            self._index_listbox.selection_set(0)
+            self._index_list.setCurrentRow(0)
 
     def _load_all_content(self) -> None:
-        """Load all documentation sections into the text widget."""
-        self._text.configure(state="normal")
-        self._text.delete("1.0", tk.END)
-
-        # Store marks for scrolling to sections
-        self._section_marks: list[str] = []
-
+        """Build HTML content from the DOCS list."""
+        html_parts = []
         for i, doc in enumerate(DOCS):
-            mark = f"section_{i}"
-            self._text.mark_set(mark, "end-1c")
-            self._text.mark_gravity(mark, "left")
-            self._section_marks.append(mark)
+            anchor = f"section_{i}"
+            self._section_anchors.append(anchor)
 
-            self._text.insert(tk.END, doc["title"] + "\n", "section")
-            self._text.insert(tk.END, doc["content"] + "\n", "body")
+            title_html = f'<a name="{anchor}"></a><h2 style="color:#5588cc; margin-top:16px;">{doc["title"]}</h2>'
+            # Convert newlines to <br> and preserve indentation with &nbsp;
+            content_escaped = (
+                doc["content"]
+                .replace("&", "&amp;")
+                .replace("<", "&lt;")
+                .replace(">", "&gt;")
+                .replace("\n", "<br>")
+                .replace("  ", "&nbsp;&nbsp;")
+            )
+            body_html = f'<p style="color:#e0e0e0; font-size:10pt; line-height:1.5;">{content_escaped}</p>'
+
+            html_parts.append(title_html + body_html)
 
             if i < len(DOCS) - 1:
-                self._text.insert(tk.END, "\n" + "─" * 70 + "\n\n", "separator")
+                html_parts.append('<hr style="border-color:#333355;">')
 
-        self._text.configure(state="disabled")
+        full_html = f"""
+        <html>
+        <body style="background-color:{BG_INPUT}; color:#e0e0e0; font-family:'Segoe UI'; font-size:10pt;">
+        {"".join(html_parts)}
+        </body>
+        </html>
+        """
+        self._browser.setHtml(full_html)
 
-    def _on_index_select(self, _event=None) -> None:
+    def _on_index_select(self, row: int) -> None:
         """Scroll to the selected section."""
-        sel = self._index_listbox.curselection()
-        if not sel:
-            return
-        idx = sel[0]
-        if idx < len(self._section_marks):
-            mark = self._section_marks[idx]
-            self._text.yview(mark)
-
-    def refresh(self) -> None:
-        """No-op refresh for tab-change compatibility."""
-        pass
+        if 0 <= row < len(self._section_anchors):
+            self._browser.scrollToAnchor(self._section_anchors[row])

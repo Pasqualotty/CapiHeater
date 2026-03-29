@@ -2,49 +2,37 @@
 StatusIndicator - Small colored circle widget indicating account status.
 """
 
-import tkinter as tk
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QColor, QPainter, QPen
+from PySide6.QtWidgets import QWidget
 
+from gui.theme import STATUS_COLORS
 
-# Status -> color mapping
-STATUS_COLORS = {
-    "running": "#00e676",
-    "paused": "#ffea00",
-    "error": "#ff1744",
-    "idle": "#757575",
-    "completed": "#2979ff",
-    "stopping": "#ff9100",
+# Extra statuses not in theme
+_EXTRA = {
     "not_started": "#757575",
     "finished": "#2979ff",
 }
+_ALL_COLORS = {**STATUS_COLORS, **_EXTRA}
 
 
-class StatusIndicator(tk.Canvas):
+class StatusIndicator(QWidget):
     """A small colored circle that represents an account status.
 
     Parameters
     ----------
-    parent : tk.Widget
-        Parent widget.
     status : str
         Initial status (``running``, ``paused``, ``error``, ``idle``, etc.).
     size : int
         Diameter of the circle in pixels (default 12).
     """
 
-    def __init__(self, parent, status: str = "idle", size: int = 12, **kwargs):
-        kwargs.setdefault("width", size)
-        kwargs.setdefault("height", size)
-        kwargs.setdefault("highlightthickness", 0)
-        kwargs.setdefault("bg", "#16213e")
-        super().__init__(parent, **kwargs)
-
+    def __init__(self, parent=None, status: str = "idle", size: int = 12):
+        super().__init__(parent)
         self._size = size
-        self._oval = self.create_oval(
-            1, 1, size - 1, size - 1,
-            fill=STATUS_COLORS.get(status, "#757575"),
-            outline="",
-        )
         self._status = status
+        self._color = QColor(_ALL_COLORS.get(status, "#757575"))
+        self.setFixedSize(size, size)
 
     @property
     def status(self) -> str:
@@ -53,5 +41,13 @@ class StatusIndicator(tk.Canvas):
     def set_status(self, status: str) -> None:
         """Update the indicator color based on the new status."""
         self._status = status
-        color = STATUS_COLORS.get(status, "#757575")
-        self.itemconfig(self._oval, fill=color)
+        self._color = QColor(_ALL_COLORS.get(status, "#757575"))
+        self.update()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(QPen(Qt.PenStyle.NoPen))
+        painter.setBrush(self._color)
+        painter.drawEllipse(1, 1, self._size - 2, self._size - 2)
+        painter.end()
