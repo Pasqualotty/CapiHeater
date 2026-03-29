@@ -1130,6 +1130,12 @@ class TwitterWorker(BaseWorker):
                 "target window already closed", "web view not found",
                 "not connected to DevTools",
             ))
+            # Detect proxy connection failures
+            proxy_failed = any(msg in exc_str for msg in (
+                "ERR_SOCKS_CONNECTION_FAILED",
+                "ERR_PROXY_CONNECTION_FAILED",
+                "ERR_TUNNEL_CONNECTION_FAILED",
+            ))
 
             if browser_closed:
                 friendly = "Navegador fechado manualmente pelo usuario"
@@ -1140,6 +1146,19 @@ class TwitterWorker(BaseWorker):
                     try:
                         self.db.execute(
                             "UPDATE accounts SET status = 'idle' WHERE id = ?",
+                            (account_id,),
+                        )
+                    except Exception:
+                        pass
+            elif proxy_failed:
+                friendly = "Falha na conexao com o proxy. Verifique se o proxy esta ativo e as credenciais estao corretas."
+                logger.warning(f"[{username}] {friendly}")
+                self._log_activity("sistema", "failed", error_message=friendly)
+                self._send("status", status="error", error=friendly)
+                if self.db:
+                    try:
+                        self.db.execute(
+                            "UPDATE accounts SET status = 'error' WHERE id = ?",
                             (account_id,),
                         )
                     except Exception:
