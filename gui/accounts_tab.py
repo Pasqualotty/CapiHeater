@@ -647,22 +647,14 @@ class AccountsTab(BaseTab):
     # ==================================================================
 
     def _open_profile(self) -> None:
-        """Open selected accounts' profiles. If account has proxy, opens
-        whatismyipaddress.com instead so the user can verify the IP."""
+        """Open selected accounts' Twitter/X profiles in the browser."""
         selected_rows = {idx.row() for idx in self._table.selectionModel().selectedRows()}
         if not selected_rows:
             QMessageBox.warning(self, "Aviso", "Selecione uma ou mais contas.")
             return
         for row in selected_rows:
             username = self._username_map.get(row, "")
-            if not username:
-                continue
-            account_id = self._row_map.get(row)
-            account = self.app.account_manager.get_account(account_id) if account_id else None
-            proxy = account.get("proxy") if account else None
-            if proxy:
-                webbrowser.open("https://whatismyipaddress.com")
-            else:
+            if username:
                 webbrowser.open(f"https://x.com/{username}")
 
     def _toggle_active(self) -> None:

@@ -147,6 +147,12 @@ class TwitterWorker(BaseWorker):
         proxy = self.account.get("proxy")
         self.driver = factory.create_driver(proxy=proxy)
 
+        # If proxy is configured, show IP verification page first
+        if proxy:
+            logger.info(f"[{self.account['username']}] Proxy ativo — verificando IP em whatismyipaddress.com")
+            self.driver.get("https://whatismyipaddress.com")
+            time.sleep(5)
+
         # Navigate to Twitter so cookies can be set on the correct domain
         self.driver.get("https://x.com")
         time.sleep(3)
