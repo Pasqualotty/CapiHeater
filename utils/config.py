@@ -90,8 +90,8 @@ DEFAULT_SCROLL_CONFIG = {
     "distracted_pause_max": 12.0,
     "post_read_time_min": 5.0,
     "post_read_time_max": 15.0,
-    "comment_read_time_min": 2.0,
-    "comment_read_time_max": 6.0,
+    "comment_read_time_min": 3.0,
+    "comment_read_time_max": 8.0,
     "hover_chance": 0.12,
 }
 

@@ -25,6 +25,7 @@ from selenium.common.exceptions import (
 
 from workers.actions import selectors
 from utils.humanizer import random_delay, scroll_pause, jitter
+from utils.humanizer import smooth_scroll, smooth_scroll_to_element
 from utils.config import DEFAULT_SCROLL_CONFIG
 
 
@@ -186,18 +187,18 @@ class BrowseFeedAction:
 
                 # After returning from a post the feed may have shifted;
                 # snap back to a tweet.
-                self._snap_to_nearest_tweet(drv)
+                self._snap_to_nearest_tweet(drv, force=True)
                 if stop_check and stop_check():
                     break
 
             # Pick a browsing behaviour for this iteration.
-            # NO scroll_up — always advance forward.
             cfg = self._cfg
             behaviour = random.choices(
                 [
                     "scroll_small",
                     "scroll_medium",
                     "scroll_large",
+                    "scroll_up",
                     "pause_read",
                     "distracted_pause",
                 ],
@@ -205,6 +206,7 @@ class BrowseFeedAction:
                     cfg.get("weight_scroll_small", 32),
                     cfg.get("weight_scroll_medium", 28),
                     cfg.get("weight_scroll_large", 10),
+                    cfg.get("weight_scroll_up", 5),
                     cfg.get("weight_pause_read", 22),
                     cfg.get("weight_distracted_pause", 8),
                 ],
@@ -216,8 +218,9 @@ class BrowseFeedAction:
                     cfg.get("scroll_small_min", 200),
                     cfg.get("scroll_small_max", 400),
                 )
-                drv.execute_script(f"window.scrollBy(0, {px});")
-                self._snap_to_nearest_tweet(drv)
+                smooth_scroll(drv, px)
+                if random.random() < 0.30:
+                    self._snap_to_nearest_tweet(drv, force=True)
                 random_delay(
                     cfg.get("pause_after_small_min", 1.5),
                     cfg.get("pause_after_small_max", 3.0),
@@ -228,8 +231,9 @@ class BrowseFeedAction:
                     cfg.get("scroll_medium_min", 450),
                     cfg.get("scroll_medium_max", 750),
                 )
-                drv.execute_script(f"window.scrollBy(0, {px});")
-                self._snap_to_nearest_tweet(drv)
+                smooth_scroll(drv, px)
+                if random.random() < 0.30:
+                    self._snap_to_nearest_tweet(drv, force=True)
                 random_delay(
                     cfg.get("pause_after_medium_min", 1.5),
                     cfg.get("pause_after_medium_max", 3.0),
@@ -240,12 +244,18 @@ class BrowseFeedAction:
                     cfg.get("scroll_large_min", 800),
                     cfg.get("scroll_large_max", 1400),
                 )
-                drv.execute_script(f"window.scrollBy(0, {px});")
-                self._snap_to_nearest_tweet(drv)
+                smooth_scroll(drv, px)
+                if random.random() < 0.30:
+                    self._snap_to_nearest_tweet(drv, force=True)
                 random_delay(
                     cfg.get("pause_after_large_min", 0.8),
                     cfg.get("pause_after_large_max", 1.5),
                 )
+
+            elif behaviour == "scroll_up":
+                px = random.randint(100, 300)
+                smooth_scroll(drv, px, direction="up")
+                random_delay(1.0, 2.5)
 
             elif behaviour == "pause_read":
                 # Linger on the current tweet as if reading it carefully.
@@ -304,8 +314,14 @@ class BrowseFeedAction:
     def _should_stop(self, stop_check) -> bool:
         return stop_check is not None and stop_check()
 
-    def _snap_to_nearest_tweet(self, drv: WebDriver) -> None:
-        """Smooth-scroll so the nearest non-ad tweet is centred on screen."""
+    def _snap_to_nearest_tweet(self, drv: WebDriver, force: bool = False) -> None:
+        """Smooth-scroll so the nearest non-ad tweet is centred on screen.
+
+        When *force* is False (default) this is a no-op so that snapping
+        does not fire after every single scroll, which looks robotic.
+        """
+        if not force:
+            return
         try:
             drv.execute_script(self._JS_SNAP_TO_NEAREST_TWEET)
             # Give the smooth scroll a moment to settle.
@@ -426,8 +442,7 @@ class BrowseFeedAction:
                 if self._is_ad_tweet(drv, target):
                     self.logger.info("Anuncio detectado, pulando...")
                     self._emit("ad_skipped", {})
-                    drv.execute_script("window.scrollBy(0, 500);")
-                    self._snap_to_nearest_tweet(drv)
+                    smooth_scroll(drv, 500)
                     time.sleep(0.5)
                     continue
 
@@ -435,8 +450,7 @@ class BrowseFeedAction:
                 tweet_url = self._extract_tweet_url(target)
                 if tweet_url and tweet_url in self._opened_urls:
                     self.logger.info("Post ja aberto nesta sessao, scrollando...")
-                    drv.execute_script("window.scrollBy(0, 600);")
-                    self._snap_to_nearest_tweet(drv)
+                    smooth_scroll(drv, 600)
                     time.sleep(0.5)
                     continue
 
@@ -451,6 +465,9 @@ class BrowseFeedAction:
                         time.sleep(1.0)
                         continue
                     return False
+
+                smooth_scroll_to_element(drv, target)
+                random_delay(0.5, 1.5)
 
                 self.logger.info("Visualizando post %d/%d", post_number, total_posts)
                 self._emit("post_open", {
@@ -614,7 +631,7 @@ class BrowseFeedAction:
         """
         # Scroll past the original post to reach comments area
         initial_scroll = random.randint(600, 900)
-        drv.execute_script(f"window.scrollBy(0, {initial_scroll});")
+        smooth_scroll(drv, initial_scroll)
         random_delay(1.5, 3.0)
 
         # Check if there are actual replies (not just the main tweet)
@@ -627,7 +644,7 @@ class BrowseFeedAction:
             self.logger.info("Nenhum comentario encontrado no post %d", post_number)
             return 0
 
-        num_comments = min(random.randint(3, 8), reply_count + 2)  # +2 for lazy-loaded ones
+        num_comments = min(random.randint(2, 5), reply_count + 2)  # +2 for lazy-loaded ones
         self.logger.info(
             "Visualizando ~%d comentarios do post %d (%d visiveis)...",
             num_comments, post_number, reply_count,
@@ -641,8 +658,8 @@ class BrowseFeedAction:
                 break
 
             px = random.randint(300, 600)
-            drv.execute_script(f"window.scrollBy(0, {px});")
-            time.sleep(0.5)
+            smooth_scroll(drv, px)
+            random_delay(1.5, 3.0)
 
             # Check if scroll actually moved (end of page detection)
             new_scroll_y = drv.execute_script("return window.scrollY;")
@@ -650,9 +667,6 @@ class BrowseFeedAction:
                 self.logger.info("Fim dos comentarios no post %d", post_number)
                 break
             last_scroll_y = new_scroll_y
-
-            # Snap to the nearest reply tweet
-            self._snap_to_nearest_tweet(drv)
 
             # Check if we actually have reply tweets in view
             try:
@@ -677,10 +691,14 @@ class BrowseFeedAction:
             # "Read" the comment
             cfg = self._cfg
             read_time = random.uniform(
-                cfg.get("comment_read_time_min", 2.0),
-                cfg.get("comment_read_time_max", 6.0),
+                cfg.get("comment_read_time_min", 3.0),
+                cfg.get("comment_read_time_max", 8.0),
             )
             time.sleep(read_time)
+
+        # Scroll back to top of the post before leaving
+        drv.execute_script("window.scrollTo({top: 0, behavior: 'smooth'});")
+        random_delay(1.0, 2.0)
 
         # Small pause before going back
         random_delay(1.0, 3.0)

@@ -12,6 +12,7 @@ from workers.base_worker import BaseWorker
 from workers.actions.browse_feed import BrowseFeedAction
 from core.scheduler import Scheduler
 from utils.logger import get_logger
+from utils.humanizer import smooth_scroll, smooth_scroll_to_element
 
 logger = get_logger(__name__)
 
@@ -370,7 +371,10 @@ class TwitterWorker(BaseWorker):
         """Scroll the page naturally before interacting."""
         for _ in range(times):
             px = random.randint(200, 500)
-            self.driver.execute_script(f"window.scrollBy(0, {px});")
+            if random.random() < 0.10:
+                smooth_scroll(self.driver, random.randint(80, 200), direction="up")
+                time.sleep(random.uniform(0.8, 2.0))
+            smooth_scroll(self.driver, px)
             time.sleep(random.uniform(1.5, 4.0))
 
     def _scroll_profile(self):
@@ -403,7 +407,7 @@ class TwitterWorker(BaseWorker):
             chosen = random.choices(scroll_types, weights=weights, k=1)[0]
             _, px_min, px_max, pause_min, pause_max = chosen
             px = random.randint(int(px_min), int(px_max))
-            self.driver.execute_script(f"window.scrollBy(0, {px});")
+            smooth_scroll(self.driver, px)
             time.sleep(random.uniform(pause_min, pause_max))
 
         # Occasional hover (same chance as feed)
@@ -440,10 +444,7 @@ class TwitterWorker(BaseWorker):
                     btn = random.choice(like_buttons[:5]) if len(like_buttons) > 1 else like_buttons[0]
 
                     # Scroll to it smoothly
-                    self.driver.execute_script(
-                        "arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});",
-                        btn,
-                    )
+                    smooth_scroll_to_element(self.driver, btn)
                     time.sleep(random.uniform(1.5, 3.5))
 
                     btn.click()
@@ -913,28 +914,85 @@ class TwitterWorker(BaseWorker):
                     if not self.should_continue():
                         break
                     try:
-                        like_buttons = self.driver.find_elements(
-                            "css selector", '[data-testid="like"]'
-                        )
-                        if like_buttons:
-                            btn = random.choice(like_buttons[:3]) if len(like_buttons) > 1 else like_buttons[0]
-                            self.driver.execute_script(
-                                "arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});",
-                                btn,
+                        # Find tweet articles on the profile
+                        tweets = self.driver.find_elements("css selector", '[data-testid="tweet"]')
+                        if not tweets:
+                            self._scroll_naturally(1)
+                            continue
+
+                        # Pick a random tweet from visible ones (prefer top 3-5)
+                        visible_tweets = tweets[:min(5, len(tweets))]
+                        chosen_tweet = random.choice(visible_tweets)
+
+                        # Smooth-scroll it to center
+                        smooth_scroll_to_element(self.driver, chosen_tweet)
+                        time.sleep(random.uniform(1.0, 3.0))
+
+                        # Find clickable element (timestamp link) inside this tweet
+                        clickable = None
+                        try:
+                            time_links = chosen_tweet.find_elements("css selector", "a[href*='/status/'] time")
+                            if time_links:
+                                clickable = time_links[0].find_element("xpath", "..")
+                        except Exception:
+                            pass
+                        if clickable is None:
+                            try:
+                                clickable = chosen_tweet.find_element("css selector", '[data-testid="tweetText"]')
+                            except Exception:
+                                pass
+
+                        if clickable is None:
+                            self._scroll_naturally(1)
+                            continue
+
+                        # Click to open the post
+                        from selenium.webdriver.common.action_chains import ActionChains
+                        ActionChains(self.driver).move_to_element(clickable).pause(
+                            random.uniform(0.3, 0.8)
+                        ).click().perform()
+
+                        # Wait for post page to load
+                        try:
+                            from selenium.webdriver.support.ui import WebDriverWait
+                            WebDriverWait(self.driver, 10).until(
+                                lambda d: "/status/" in d.current_url
                             )
-                            time.sleep(random.uniform(1.5, 3.5))
-                            btn.click()
+                        except Exception:
+                            logger.warning(f"Post did not load for @{target_user}")
+                            continue
+
+                        # Read the post
+                        time.sleep(random.uniform(3.0, 8.0))
+
+                        # Find and click like button INSIDE the opened post
+                        like_buttons = self.driver.find_elements("css selector", '[data-testid="like"]')
+                        if like_buttons:
+                            like_btn = like_buttons[0]
+                            smooth_scroll_to_element(self.driver, like_btn)
+                            time.sleep(random.uniform(0.5, 1.5))
+                            like_btn.click()
                             done += 1
                             self._send("action_complete", action="like", target=target_user, progress=done)
                             self._log_activity("like", "success", target_username=target_user, target_url=f"https://x.com/{target_user}")
                             self._record_action(target_user, "like", getattr(self, "_current_day", 1))
                             logger.info(f"[{self.account['username']}] Like on @{target_user} profile {done}/{count}")
-                            break
-                        else:
-                            self._scroll_profile()
+
+                        # Go back to profile
+                        self.driver.back()
+                        time.sleep(random.uniform(2.0, 4.0))
+                        break
+
                     except Exception as exc:
                         self._log_activity("like", "failed", target_username=target_user, error_message=str(exc))
                         logger.warning(f"Like on profile @{target_user} failed: {exc}")
+                        # If stuck on a /status/ page, go back
+                        try:
+                            if "/status/" in self.driver.current_url:
+                                self.driver.back()
+                                time.sleep(random.uniform(2.0, 4.0))
+                        except Exception:
+                            pass
                         self._scroll_profile()
 
                 self._random_delay()
