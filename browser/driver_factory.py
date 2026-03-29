@@ -114,9 +114,13 @@ class DriverFactory:
             from browser.proxy_config import ProxyConfig
 
             proxy_cfg = ProxyConfig.parse(proxy)
-            if proxy_cfg.requires_auth:
-                # Authenticated proxy: use Chrome extension that configures
-                # proxy via chrome.proxy.settings API and handles auth
+            if proxy_cfg.requires_auth and proxy_cfg.scheme.startswith("socks"):
+                # SOCKS with auth: Chrome can't handle SOCKS auth natively.
+                # Start a local relay that handles auth via PySocks.
+                local_port = proxy_cfg.start_local_relay()
+                options.add_argument(f"--proxy-server=socks5://127.0.0.1:{local_port}")
+            elif proxy_cfg.requires_auth:
+                # HTTP/HTTPS with auth: use Chrome extension
                 ext_path = proxy_cfg.create_auth_extension()
                 options.add_argument(f"--load-extension={ext_path}")
             else:

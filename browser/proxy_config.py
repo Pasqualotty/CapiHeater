@@ -144,6 +144,143 @@ chrome.webRequest.onAuthRequired.addListener(
         return ext_dir
 
     # ------------------------------------------------------------------
+    # Local SOCKS relay for authenticated SOCKS proxies
+    # ------------------------------------------------------------------
+
+    def start_local_relay(self) -> int:
+        """Start a local TCP relay that forwards traffic through the
+        authenticated SOCKS proxy.  Chrome connects to 127.0.0.1:<port>
+        without auth; the relay handles SOCKS auth via PySocks.
+
+        Returns the local port number.
+        """
+        import socket
+        import threading
+        import socks
+
+        proxy_type = socks.SOCKS5 if "5" in self.scheme else socks.SOCKS4
+        log = logging.getLogger(__name__)
+
+        server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        server.bind(("127.0.0.1", 0))
+        local_port = server.getsockname()[1]
+        server.listen(32)
+        server.settimeout(1.0)
+
+        log.info(f"SOCKS relay listening on 127.0.0.1:{local_port}")
+
+        def _forward(src, dst):
+            try:
+                while True:
+                    data = src.recv(65536)
+                    if not data:
+                        break
+                    dst.sendall(data)
+            except Exception:
+                pass
+            finally:
+                try:
+                    src.close()
+                except Exception:
+                    pass
+                try:
+                    dst.close()
+                except Exception:
+                    pass
+
+        def _handle(client):
+            # Read SOCKS5 handshake from Chrome
+            try:
+                data = client.recv(512)
+                if not data or data[0] != 0x05:
+                    client.close()
+                    return
+
+                # Reply: no auth required locally
+                client.sendall(b"\x05\x00")
+
+                # Read connect request
+                req = client.recv(512)
+                if not req or req[1] != 0x01:
+                    client.close()
+                    return
+
+                # Parse destination
+                atyp = req[3]
+                if atyp == 0x01:  # IPv4
+                    dst_host = socket.inet_ntoa(req[4:8])
+                    dst_port = int.from_bytes(req[8:10], "big")
+                elif atyp == 0x03:  # Domain
+                    domain_len = req[4]
+                    dst_host = req[5:5 + domain_len].decode()
+                    dst_port = int.from_bytes(req[5 + domain_len:7 + domain_len], "big")
+                elif atyp == 0x04:  # IPv6
+                    dst_host = socket.inet_ntop(socket.AF_INET6, req[4:20])
+                    dst_port = int.from_bytes(req[20:22], "big")
+                else:
+                    client.close()
+                    return
+
+                # Connect to destination via remote SOCKS proxy
+                remote = socks.socksocket(socket.AF_INET, socket.SOCK_STREAM)
+                remote.set_proxy(
+                    proxy_type,
+                    self.host,
+                    self.port,
+                    username=self.username,
+                    password=self.password,
+                )
+                remote.settimeout(15)
+                remote.connect((dst_host, dst_port))
+
+                # Send success reply
+                reply = b"\x05\x00\x00\x01" + socket.inet_aton("0.0.0.0") + (0).to_bytes(2, "big")
+                client.sendall(reply)
+
+                # Forward bidirectionally
+                t1 = threading.Thread(target=_forward, args=(client, remote), daemon=True)
+                t2 = threading.Thread(target=_forward, args=(remote, client), daemon=True)
+                t1.start()
+                t2.start()
+                t1.join()
+                t2.join()
+
+            except Exception as exc:
+                log.debug(f"Relay connection error: {exc}")
+                try:
+                    client.close()
+                except Exception:
+                    pass
+
+        self._relay_server = server
+        self._relay_running = True
+
+        def _accept_loop():
+            while self._relay_running:
+                try:
+                    client, _ = server.accept()
+                    threading.Thread(target=_handle, args=(client,), daemon=True).start()
+                except socket.timeout:
+                    continue
+                except Exception:
+                    if self._relay_running:
+                        continue
+                    break
+
+        threading.Thread(target=_accept_loop, daemon=True).start()
+        return local_port
+
+    def stop_relay(self):
+        """Stop the local SOCKS relay server."""
+        self._relay_running = False
+        if hasattr(self, "_relay_server"):
+            try:
+                self._relay_server.close()
+            except Exception:
+                pass
+
+    # ------------------------------------------------------------------
     # Selenium wire dict (useful if switching to seleniumwire later)
     # ------------------------------------------------------------------
 
