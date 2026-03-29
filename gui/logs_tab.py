@@ -47,6 +47,8 @@ class LogsTab(BaseTab):
         self._auto_refresh_timer.timeout.connect(self._auto_refresh_tick)
         self._build_ui()
         self.refresh()
+        # Auto-refresh on by default
+        self._auto_refresh_cb.setChecked(True)
 
     # ==================================================================
     # UI

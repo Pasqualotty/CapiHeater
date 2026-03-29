@@ -83,8 +83,8 @@ class TwitterWorker(BaseWorker):
         try:
             self.db.execute(
                 """INSERT INTO activity_logs
-                   (account_id, action_type, target_username, target_url, status, error_message)
-                   VALUES (?, ?, ?, ?, ?, ?)""",
+                   (account_id, action_type, target_username, target_url, status, error_message, executed_at)
+                   VALUES (?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))""",
                 (self.account["id"], action_type, target_username, target_url,
                  status, error_message),
             )
