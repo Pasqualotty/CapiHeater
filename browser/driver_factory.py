@@ -114,11 +114,14 @@ class DriverFactory:
             from browser.proxy_config import ProxyConfig
 
             proxy_cfg = ProxyConfig.parse(proxy)
+            # Always set --proxy-server so Chrome routes traffic through the proxy
+            options.add_argument(
+                f"--proxy-server={proxy_cfg.scheme}://{proxy_cfg.host}:{proxy_cfg.port}"
+            )
+            # For authenticated proxies, also load the auth extension
             if proxy_cfg.requires_auth:
                 ext_path = proxy_cfg.create_auth_extension()
                 options.add_argument(f"--load-extension={ext_path}")
-            else:
-                options.add_argument(f"--proxy-server={proxy_cfg.scheme}://{proxy_cfg.host}:{proxy_cfg.port}")
 
         # Create driver - undetected_chromedriver handles anti-detection internally
         # Detect installed Chrome major version to avoid driver/browser mismatch

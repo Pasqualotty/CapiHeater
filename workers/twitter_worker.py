@@ -1123,19 +1123,40 @@ class TwitterWorker(BaseWorker):
                     pass
 
         except Exception as exc:
-            tb = traceback.format_exc()
-            logger.error(f"[{username}] Worker error: {exc}\n{tb}")
-            self._log_activity("sistema", "failed", error_message=str(exc))
-            self._send("status", status="error", error=str(exc))
-            # Update status in the database so it doesn't stay stuck as "running"
-            if self.db:
-                try:
-                    self.db.execute(
-                        "UPDATE accounts SET status = 'error' WHERE id = ?",
-                        (account_id,),
-                    )
-                except Exception:
-                    pass
+            exc_str = str(exc)
+            # Detect browser closed manually by user
+            browser_closed = any(msg in exc_str for msg in (
+                "no such window", "invalid session id",
+                "target window already closed", "web view not found",
+                "not connected to DevTools",
+            ))
+
+            if browser_closed:
+                friendly = "Navegador fechado manualmente pelo usuario"
+                logger.info(f"[{username}] {friendly}")
+                self._log_activity("sistema", "success", error_message=friendly)
+                self._send("status", status="idle")
+                if self.db:
+                    try:
+                        self.db.execute(
+                            "UPDATE accounts SET status = 'idle' WHERE id = ?",
+                            (account_id,),
+                        )
+                    except Exception:
+                        pass
+            else:
+                tb = traceback.format_exc()
+                logger.error(f"[{username}] Worker error: {exc}\n{tb}")
+                self._log_activity("sistema", "failed", error_message=exc_str)
+                self._send("status", status="error", error=exc_str)
+                if self.db:
+                    try:
+                        self.db.execute(
+                            "UPDATE accounts SET status = 'error' WHERE id = ?",
+                            (account_id,),
+                        )
+                    except Exception:
+                        pass
 
         finally:
             self._close_browser()
