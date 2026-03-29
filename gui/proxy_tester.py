@@ -34,31 +34,72 @@ class _ProxyTestWorker(QObject):
             cfg = ProxyConfig.parse(proxy_string)
 
             if cfg.scheme.startswith("socks"):
-                self.error.emit(
-                    "Teste de proxy SOCKS nao suportado.\n"
-                    "Use o navegador para verificar proxies SOCKS."
-                )
-                return
-
-            proxy_url = f"{cfg.scheme}://"
-            if cfg.requires_auth:
-                proxy_url += f"{cfg.username}:{cfg.password}@"
-            proxy_url += f"{cfg.host}:{cfg.port}"
-
-            handler = urllib.request.ProxyHandler({
-                "http": proxy_url,
-                "https": proxy_url,
-            })
-            opener = urllib.request.build_opener(handler)
-            response = opener.open("https://httpbin.org/ip", timeout=10)
-            data = json.loads(response.read().decode())
-            ip = data.get("origin", "IP desconhecido")
-            self.finished.emit(ip)
+                self._test_socks(cfg)
+            else:
+                self._test_http(cfg)
 
         except ValueError as exc:
             self.error.emit(f"Formato invalido: {exc}")
         except Exception as exc:
             self.error.emit(str(exc))
+
+    def _test_http(self, cfg) -> None:
+        """Test HTTP/HTTPS proxy via urllib."""
+        proxy_url = f"{cfg.scheme}://"
+        if cfg.requires_auth:
+            proxy_url += f"{cfg.username}:{cfg.password}@"
+        proxy_url += f"{cfg.host}:{cfg.port}"
+
+        handler = urllib.request.ProxyHandler({
+            "http": proxy_url,
+            "https": proxy_url,
+        })
+        opener = urllib.request.build_opener(handler)
+        response = opener.open("https://httpbin.org/ip", timeout=10)
+        data = json.loads(response.read().decode())
+        ip = data.get("origin", "IP desconhecido")
+        self.finished.emit(ip)
+
+    def _test_socks(self, cfg) -> None:
+        """Test SOCKS proxy via PySocks."""
+        import socket
+        import socks
+
+        proxy_type = socks.SOCKS5 if "5" in cfg.scheme else socks.SOCKS4
+
+        s = socks.socksocket(socket.AF_INET, socket.SOCK_STREAM)
+        s.set_proxy(
+            proxy_type,
+            cfg.host,
+            int(cfg.port),
+            username=cfg.username if cfg.requires_auth else None,
+            password=cfg.password if cfg.requires_auth else None,
+        )
+        s.settimeout(10)
+
+        try:
+            # Connect to httpbin via SOCKS and send HTTP request
+            s.connect(("httpbin.org", 80))
+            request = (
+                "GET /ip HTTP/1.1\r\n"
+                "Host: httpbin.org\r\n"
+                "Connection: close\r\n\r\n"
+            )
+            s.sendall(request.encode())
+
+            response = b""
+            while True:
+                chunk = s.recv(4096)
+                if not chunk:
+                    break
+                response += chunk
+
+            body = response.decode().split("\r\n\r\n", 1)[-1]
+            data = json.loads(body)
+            ip = data.get("origin", "IP desconhecido")
+            self.finished.emit(ip)
+        finally:
+            s.close()
 
 
 def create_proxy_test_row(proxy_line_edit: QLineEdit) -> QWidget:
