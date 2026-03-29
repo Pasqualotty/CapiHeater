@@ -147,11 +147,32 @@ class TwitterWorker(BaseWorker):
         proxy = self.account.get("proxy")
         self.driver = factory.create_driver(proxy=proxy)
 
-        # If proxy is configured, show IP verification page first
+        # If proxy is configured, verify it's working by checking the IP
         if proxy:
-            logger.info(f"[{self.account['username']}] Proxy ativo — verificando IP em whatismyipaddress.com")
+            username = self.account['username']
+            logger.info(f"[{username}] Proxy ativo — verificando IP...")
+            self._log_activity("sistema", "success", error_message="Verificando proxy...")
+
+            # Show whatismyipaddress.com so user can see visually
             self.driver.get("https://whatismyipaddress.com")
             time.sleep(5)
+
+            # Verify IP programmatically via API
+            try:
+                self.driver.get("https://httpbin.org/ip")
+                time.sleep(2)
+                import re as _re
+                page_text = self.driver.find_element("tag name", "body").text
+                ip_match = _re.search(r'"origin"\s*:\s*"([^"]+)"', page_text)
+                detected_ip = ip_match.group(1) if ip_match else "desconhecido"
+                logger.info(f"[{username}] Proxy verificado — IP: {detected_ip}")
+                self._log_activity("sistema", "success",
+                                   error_message=f"Proxy verificado — IP: {detected_ip}")
+                self._send("status", status="running")
+            except Exception:
+                logger.warning(f"[{username}] Nao foi possivel verificar IP do proxy (continuando)")
+                self._log_activity("sistema", "warning",
+                                   error_message="Nao foi possivel verificar IP do proxy")
 
         # Navigate to Twitter so cookies can be set on the correct domain
         self.driver.get("https://x.com")
