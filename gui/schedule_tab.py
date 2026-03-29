@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
     QDialogButtonBox,
+    QFileDialog,
     QFormLayout,
     QHBoxLayout,
     QHeaderView,
@@ -93,6 +94,8 @@ class ScheduleTab(BaseTab):
         for text, slot in [
             ("Novo Cronograma", self._on_new),
             ("Duplicar", self._on_duplicate),
+            ("Exportar", self._on_export),
+            ("Importar", self._on_import),
             ("Editar Dia", self._on_edit_day),
             ("Adicionar Dia", self._on_add_day),
             ("Duplicar Dia", self._on_duplicate_day),
@@ -407,6 +410,115 @@ class ScheduleTab(BaseTab):
         self._select_by_name(name.strip())
 
         QMessageBox.information(self, "Sucesso", f"Cronograma duplicado como '{name.strip()}'!")
+
+    def _on_export(self) -> None:
+        """Export the current schedule to a JSON file."""
+        schedule = self._current_schedule()
+        if not schedule:
+            QMessageBox.warning(self, "Aviso", "Selecione um cronograma para exportar.")
+            return
+
+        suggested = f"{schedule['name']}.json"
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Exportar Cronograma", suggested, "JSON (*.json)"
+        )
+        if not path:
+            return
+
+        days = self._parse_days(schedule)
+        export_data = {
+            "capiheater_schedule": True,
+            "version": 1,
+            "name": schedule["name"],
+            "description": schedule.get("description", ""),
+            "days": days,
+        }
+
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(export_data, f, indent=2, ensure_ascii=False)
+            QMessageBox.information(
+                self, "Sucesso",
+                f"Cronograma '{schedule['name']}' exportado com sucesso!"
+            )
+        except Exception as exc:
+            QMessageBox.critical(self, "Erro", f"Falha ao exportar:\n{exc}")
+
+    def _on_import(self) -> None:
+        """Import a schedule from a JSON file."""
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Importar Cronograma", "", "JSON (*.json);;Todos (*.*)"
+        )
+        if not path:
+            return
+
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception as exc:
+            QMessageBox.critical(self, "Erro", f"Falha ao ler arquivo:\n{exc}")
+            return
+
+        # Accept envelope format or raw array of days
+        if isinstance(data, dict) and "days" in data:
+            days = data["days"]
+            suggested_name = data.get("name", "")
+            description = data.get("description", "")
+        elif isinstance(data, list):
+            days = data
+            suggested_name = ""
+            description = ""
+        else:
+            QMessageBox.critical(
+                self, "Erro",
+                "Formato invalido. O arquivo deve conter um cronograma CapiHeater\n"
+                "ou um array JSON de dias.",
+            )
+            return
+
+        # Validate days
+        if not days or not isinstance(days, list):
+            QMessageBox.critical(self, "Erro", "Nenhum dia encontrado no arquivo.")
+            return
+
+        required = {"day", "likes", "follows", "retweets", "unfollows"}
+        for i, day in enumerate(days):
+            if not isinstance(day, dict):
+                QMessageBox.critical(self, "Erro", f"Dia {i+1} nao e um objeto valido.")
+                return
+            missing = required - set(day.keys())
+            if missing:
+                # Fill missing with defaults
+                for key in missing:
+                    day[key] = 0
+
+        # Ask for name
+        if not suggested_name:
+            import os
+            suggested_name = os.path.splitext(os.path.basename(path))[0]
+
+        name, ok = QInputDialog.getText(
+            self, "Importar Cronograma",
+            "Nome para o cronograma importado:",
+            text=suggested_name,
+        )
+        if not ok or not name or not name.strip():
+            return
+
+        # Insert into database
+        self.app.db.execute(
+            "INSERT INTO schedules (name, description, schedule_json) VALUES (?, ?, ?)",
+            (name.strip(), description, json.dumps(days)),
+        )
+
+        self._search_edit.clear()
+        self._load_schedules()
+        self._select_by_name(name.strip())
+
+        QMessageBox.information(
+            self, "Sucesso",
+            f"Cronograma '{name.strip()}' importado com {len(days)} dia(s)!"
+        )
 
     def _on_delete(self) -> None:
         """Delete the current schedule."""

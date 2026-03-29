@@ -383,7 +383,7 @@ class AccountsTab(BaseTab):
 
         # Scroll config
         layout.addWidget(QLabel("Perfil de rolagem:"))
-        scroll_preset_names = ["Padrao Global", "Lento", "Normal", "Rapido"]
+        scroll_preset_names = ["Padrao Global", "Lento", "Normal", "Rapido", "Super Rapido", "Ultra Rapido"]
         combo_scroll = QComboBox()
         combo_scroll.addItems(scroll_preset_names)
 
@@ -559,7 +559,7 @@ class AccountsTab(BaseTab):
 
         # Scroll config
         layout.addWidget(QLabel("Perfil de rolagem:"))
-        scroll_options = ["\u2014 Nao alterar \u2014", "Padrao Global", "Lento", "Normal", "Rapido"]
+        scroll_options = ["\u2014 Nao alterar \u2014", "Padrao Global", "Lento", "Normal", "Rapido", "Super Rapido", "Ultra Rapido"]
         combo_scroll = QComboBox()
         combo_scroll.addItems(scroll_options)
         combo_scroll.setCurrentIndex(0)
