@@ -310,7 +310,7 @@ class ScheduleTab(BaseTab):
             "browse_before_min": 0, "browse_before_max": 0,
             "browse_between_min": 0, "browse_between_max": 0,
             "posts_to_open": 0, "view_comments_chance": 0.3,
-            "likes_on_feed": True, "follow_initial_count": 0,
+            "likes_on_feed": False, "retweets_on_feed": False, "follow_initial_count": 0,
         }
         result = self._edit_day_dialog(new_day)
         if result:
@@ -676,11 +676,11 @@ class ScheduleTab(BaseTab):
 
         # Checkboxes
         chk_likes_feed = QCheckBox("Curtir no feed")
-        chk_likes_feed.setChecked(day.get("likes_on_feed", True))
+        chk_likes_feed.setChecked(day.get("likes_on_feed", False))
         main_layout.addWidget(chk_likes_feed)
 
         chk_rt_feed = QCheckBox("RT no feed")
-        chk_rt_feed.setChecked(day.get("retweets_on_feed", True))
+        chk_rt_feed.setChecked(day.get("retweets_on_feed", False))
         main_layout.addWidget(chk_rt_feed)
 
         _add_spin_row("Follows iniciais:", "follow_initial_count", max_val=10)

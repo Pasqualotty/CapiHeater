@@ -53,6 +53,7 @@ class TwitterWorker(BaseWorker):
         self.account = account
         self.schedule_json = schedule_json
         self.targets = list(targets)  # local copy
+        self.followed_targets = []   # populated in run() from action_history
         self.queue = message_queue
         self.driver_factory = driver_factory
         self.driver = None
@@ -568,6 +569,9 @@ class TwitterWorker(BaseWorker):
                     self._log_activity("follow", "success", target_username=target_user,
                                        target_url=f"https://x.com/{target_user}")
                     self._record_action(target_user, "follow", getattr(self, "_current_day", 1))
+                    # Add to followed targets for likes/RTs on profiles
+                    if not any(t.get("username") == target_user for t in self.followed_targets):
+                        self.followed_targets.append({"username": target_user})
                     logger.info(f"[{self.account['username']}] Followed @{target_user} ({done}/{count})")
                     time.sleep(random.uniform(1.5, 3.0))
                 elif follow_result == "already_following":
@@ -578,9 +582,12 @@ class TwitterWorker(BaseWorker):
                     self._record_action(target_user, "follow", getattr(self, "_current_day", 1))
                     logger.info(f"[{self.account['username']}] Already following @{target_user}, "
                                 f"skipped ({skipped_already} skipped so far)")
-                    # Remove from local list so it won't be tried again this session
+                    # Remove from unfollowed list so it won't be tried again this session
                     self.targets = [t for t in self.targets
                                     if t.get("username", "").lstrip("@") != target_user]
+                    # Add to followed targets for likes/RTs on profiles
+                    if not any(t.get("username") == target_user for t in self.followed_targets):
+                        self.followed_targets.append({"username": target_user})
                 else:
                     self._log_activity("follow", "skipped", target_username=target_user,
                                        error_message="Botao Follow nao encontrado")
@@ -664,13 +671,19 @@ class TwitterWorker(BaseWorker):
         return done
 
     def _execute_retweets_on_profiles(self, count: int):
-        """Retweet tweets by visiting target profiles."""
+        """Retweet tweets by visiting already-followed target profiles."""
         done = 0
         if count <= 0:
             return done
 
-        self._log_activity("retweet", "success", error_message=f"Iniciando {count} retweets em perfis alvo")
-        for target in self._cycle_targets(count):
+        if not self.followed_targets:
+            self._log_activity("retweet", "skipped",
+                               error_message="Nenhum alvo ja seguido disponivel para RTs em perfis")
+            self._send("warning", message="Sem alvos ja seguidos para RTs em perfis.")
+            return done
+
+        self._log_activity("retweet", "success", error_message=f"Iniciando {count} retweets em perfis alvo (ja seguidos)")
+        for target in self._cycle_followed_targets(count):
             if not self.should_continue():
                 break
             try:
@@ -864,9 +877,11 @@ class TwitterWorker(BaseWorker):
             except Exception as exc:
                 logger.debug(f"Erro ao remover alvo do banco: {exc}")
 
-        # Remove from local list
+        # Remove from local lists
         self.targets = [t for t in self.targets
                         if t.get("username", "").lstrip("@") != clean_user]
+        self.followed_targets = [t for t in self.followed_targets
+                                 if t.get("username", "").lstrip("@") != clean_user]
 
     def _cycle_targets(self, count: int):
         """Yield *count* targets, cycling through the list if necessary."""
@@ -875,19 +890,33 @@ class TwitterWorker(BaseWorker):
                 return
             yield self.targets[i % len(self.targets)]
 
+    def _cycle_followed_targets(self, count: int):
+        """Yield *count* followed targets, cycling through the list if necessary.
+        Used for likes/RTs on profiles of already-followed accounts."""
+        for i in range(count):
+            if not self.followed_targets:
+                return
+            yield self.followed_targets[i % len(self.followed_targets)]
+
     def _iter_available_targets(self):
         """Yield all available targets once (no cycling). Used for follows."""
         for target in list(self.targets):
             yield target
 
     def _execute_likes_on_profiles(self, count: int):
-        """Like tweets by visiting target profiles instead of the home feed."""
+        """Like tweets by visiting already-followed target profiles."""
         done = 0
         if count <= 0:
             return done
 
-        self._log_activity("like", "success", error_message=f"Iniciando {count} likes em perfis alvo")
-        for target in self._cycle_targets(count):
+        if not self.followed_targets:
+            self._log_activity("like", "skipped",
+                               error_message="Nenhum alvo ja seguido disponivel para likes em perfis")
+            self._send("warning", message="Sem alvos ja seguidos para likes em perfis.")
+            return done
+
+        self._log_activity("like", "success", error_message=f"Iniciando {count} likes em perfis alvo (ja seguidos)")
+        for target in self._cycle_followed_targets(count):
             if not self.should_continue():
                 break
             try:
@@ -1055,6 +1084,13 @@ class TwitterWorker(BaseWorker):
 
             # Filter out targets already followed (ANY day — follows should never repeat)
             already_followed = self._get_all_followed_targets()
+
+            # Build list of followed targets for likes/RTs on profiles
+            self.followed_targets = [{"username": u} for u in already_followed] if already_followed else []
+            if self.followed_targets:
+                self._log_activity("sistema", "success",
+                                   error_message=f"{len(self.followed_targets)} alvos ja seguidos disponiveis para likes/RTs em perfis")
+
             if already_followed:
                 before = len(self.targets)
                 self.targets = [t for t in self.targets
@@ -1086,8 +1122,8 @@ class TwitterWorker(BaseWorker):
             # New behavior settings
             posts_to_open = actions.get("posts_to_open", 0)
             view_comments_chance = actions.get("view_comments_chance", 0.3)
-            likes_on_feed = actions.get("likes_on_feed", True)
-            retweets_on_feed = actions.get("retweets_on_feed", True)
+            likes_on_feed = actions.get("likes_on_feed", False)
+            retweets_on_feed = actions.get("retweets_on_feed", False)
             follow_initial_count = actions.get("follow_initial_count", 0)
 
             # 3b. Execute initial follows IMMEDIATELY after login

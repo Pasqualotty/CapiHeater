@@ -121,7 +121,8 @@ class Scheduler:
         # Use sensible defaults if the schedule was created before these fields existed
         actions["posts_to_open"] = entry.get("posts_to_open", 2)
         actions["view_comments_chance"] = entry.get("view_comments_chance", 0.3)
-        actions["likes_on_feed"] = entry.get("likes_on_feed", True)
+        actions["likes_on_feed"] = entry.get("likes_on_feed", False)
+        actions["retweets_on_feed"] = entry.get("retweets_on_feed", False)
         actions["follow_initial_count"] = entry.get("follow_initial_count", 2)
 
         return actions
