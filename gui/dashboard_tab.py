@@ -2,7 +2,7 @@
 DashboardTab - Overview of all accounts and quick controls.
 """
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor
@@ -22,10 +22,13 @@ from PySide6.QtWidgets import (
 
 from gui.base import BaseTab
 from gui.theme import (
+    ACCENT,
+    BG_ACCENT,
     COLOR_ERROR,
     COLOR_SUCCESS,
     COLOR_WARNING,
     FG_MUTED,
+    FG_TEXT,
     FG_TITLE,
 )
 
@@ -52,6 +55,7 @@ class DashboardTab(BaseTab):
         super().__init__(app, parent)
         self._account_rows: dict[int, int] = {}  # account_id -> table row
         self._accounts_cache: list[dict] = []
+        self._filtered_cache: list[dict] = []
         self._build_ui()
         self.refresh()
 
@@ -119,10 +123,41 @@ class DashboardTab(BaseTab):
         btn_layout.addStretch()
         layout.addLayout(btn_layout)
 
+        # ---------- Heating filter toggles ----------
+        filter_layout = QHBoxLayout()
+        filter_layout.setSpacing(4)
+
+        self._filter_buttons: list[QPushButton] = []
+        self._current_filter = "all"
+        toggle_style_active = (
+            f"background-color: {ACCENT}; color: #fff; border: none; "
+            "border-radius: 4px; padding: 4px 14px; font-weight: bold; font-size: 9pt;"
+        )
+        toggle_style_inactive = (
+            f"background-color: {BG_ACCENT}; color: {FG_TEXT}; border: none; "
+            "border-radius: 4px; padding: 4px 14px; font-size: 9pt;"
+        )
+
+        for key, label in [("all", "Todas"), ("heating", "Em Aquecimento"), ("completed", "Concluido")]:
+            btn = QPushButton(label)
+            btn.setCheckable(True)
+            btn.setChecked(key == "all")
+            btn.setStyleSheet(toggle_style_active if key == "all" else toggle_style_inactive)
+            btn.setProperty("filter_key", key)
+            btn.clicked.connect(lambda checked, k=key: self._set_filter(k))
+            filter_layout.addWidget(btn)
+            self._filter_buttons.append(btn)
+
+        self._toggle_style_active = toggle_style_active
+        self._toggle_style_inactive = toggle_style_inactive
+
+        filter_layout.addStretch()
+        layout.addLayout(filter_layout)
+
         # ---------- Account table ----------
         self._table = QTableWidget()
-        self._table.setColumnCount(4)
-        self._table.setHorizontalHeaderLabels(["", "Conta", "Status", "Dia"])
+        self._table.setColumnCount(5)
+        self._table.setHorizontalHeaderLabels(["", "Conta", "Status", "Dia", "Ultimo Aquecimento"])
         self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self._table.setSelectionMode(QTableWidget.SelectionMode.ExtendedSelection)
         self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
@@ -138,6 +173,7 @@ class DashboardTab(BaseTab):
         header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
         header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
 
         layout.addWidget(self._table)
 
@@ -186,22 +222,44 @@ class DashboardTab(BaseTab):
         self._card_labels["paused"].setText(str(paused))
         self._card_labels["errors"].setText(str(errors))
 
+        # Apply heating filter
+        if self._current_filter == "heating":
+            filtered = [a for a in accounts if a.get("status") != "completed"]
+        elif self._current_filter == "completed":
+            filtered = [a for a in accounts if a.get("status") == "completed"]
+        else:
+            filtered = accounts
+
+        self._filtered_cache = filtered  # for _edit_day lookups
+
         # Update table
         self._table.setRowCount(0)
         self._account_rows.clear()
 
-        self._table.setRowCount(len(accounts))
-        for i, acc in enumerate(accounts):
+        self._table.setRowCount(len(filtered))
+        for i, acc in enumerate(filtered):
             aid = acc.get("id", 0)
             status = acc.get("status", "idle")
             day = acc.get("current_day", 1)
             color = QColor(_STATUS_COLORS.get(status, "#9e9e9e"))
 
+            # Format last heating timestamp
+            last_heat = acc.get("last_heating_at")
+            if last_heat:
+                try:
+                    dt = datetime.strptime(last_heat, "%Y-%m-%d %H:%M:%S")
+                    last_heat_str = dt.strftime("%d/%m %H:%M")
+                except Exception:
+                    last_heat_str = last_heat
+            else:
+                last_heat_str = "\u2014"
+
             dot = "\u25cf" if status in ("running", "paused", "error", "completed") else "\u25cb"
-            values = [dot, f"@{acc.get('username', '???')}", self._status_label(status), f"Dia {day}"]
+            values = [dot, f"@{acc.get('username', '???')}", self._status_label(status), f"Dia {day}", last_heat_str]
             alignments = [
                 Qt.AlignmentFlag.AlignCenter,
                 Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                Qt.AlignmentFlag.AlignCenter,
                 Qt.AlignmentFlag.AlignCenter,
                 Qt.AlignmentFlag.AlignCenter,
             ]
@@ -315,7 +373,7 @@ class DashboardTab(BaseTab):
         row_idx = self._account_rows.get(aid)
         if row_idx is None:
             return
-        account = self._accounts_cache[row_idx]
+        account = self._filtered_cache[row_idx]
         status = account.get("status", "idle")
 
         if status in ("running", "paused"):
@@ -340,6 +398,15 @@ class DashboardTab(BaseTab):
             aid, current_day=new_day, start_date=new_start,
         )
         self.app.set_status(f"Dia alterado para {new_day}")
+        self.refresh()
+
+    def _set_filter(self, key: str) -> None:
+        """Switch the heating filter and refresh the table."""
+        self._current_filter = key
+        for btn in self._filter_buttons:
+            is_active = btn.property("filter_key") == key
+            btn.setChecked(is_active)
+            btn.setStyleSheet(self._toggle_style_active if is_active else self._toggle_style_inactive)
         self.refresh()
 
     # ==================================================================

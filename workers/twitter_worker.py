@@ -1227,7 +1227,7 @@ class TwitterWorker(BaseWorker):
                         save_status = "idle"
 
                     self.db.execute(
-                        "UPDATE accounts SET current_day = ?, status = ? WHERE id = ?",
+                        "UPDATE accounts SET current_day = ?, status = ?, last_heating_at = datetime('now', 'localtime') WHERE id = ?",
                         (save_day, save_status, account_id),
                     )
                     logger.info(

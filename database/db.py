@@ -57,6 +57,7 @@ class Database:
                     current_day INTEGER DEFAULT 1,
                     scroll_config TEXT DEFAULT NULL,
                     notes TEXT DEFAULT '',
+                    last_heating_at TEXT DEFAULT NULL,
                     created_at TEXT DEFAULT (datetime('now', 'localtime')),
                     updated_at TEXT DEFAULT (datetime('now', 'localtime')),
                     FOREIGN KEY (schedule_id) REFERENCES schedules(id)
@@ -140,6 +141,8 @@ class Database:
             cols = {r[1] for r in cursor.execute("PRAGMA table_info(accounts)").fetchall()}
             if "scroll_config" not in cols:
                 cursor.execute("ALTER TABLE accounts ADD COLUMN scroll_config TEXT DEFAULT NULL")
+            if "last_heating_at" not in cols:
+                cursor.execute("ALTER TABLE accounts ADD COLUMN last_heating_at TEXT DEFAULT NULL")
 
             # Reset accounts stuck as 'running' from a previous crashed session
             cursor.execute(
