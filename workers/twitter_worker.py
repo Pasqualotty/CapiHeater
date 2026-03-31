@@ -1033,6 +1033,313 @@ class TwitterWorker(BaseWorker):
         return done
 
     # ------------------------------------------------------------------
+    # Comment likes on target profiles
+    # ------------------------------------------------------------------
+
+    def _execute_comment_likes(self, count: int, per_target: int = 3, skip_chance: float = 0.25):
+        """Like comments/replies on posts from already-followed target profiles.
+
+        Visits each target profile, opens a post, scrolls to comments,
+        and likes up to *per_target* comments per profile visited.
+
+        Parameters
+        ----------
+        count : int
+            Total number of comment likes to attempt for the day.
+        per_target : int
+            Maximum comments to like per target profile visited.
+        skip_chance : float
+            Probability of skipping any individual comment (0-1).
+
+        Returns
+        -------
+        int
+            Number of comments successfully liked.
+        """
+        from math import ceil
+        from selenium.common.exceptions import (
+            StaleElementReferenceException,
+            NoSuchElementException,
+            WebDriverException,
+        )
+        from utils.config import (
+            COMMENT_LIKE_DELAY_MIN,
+            COMMENT_LIKE_DELAY_MAX,
+            MAX_COMMENT_LIKES_PER_DAY,
+        )
+        from utils.humanizer import (
+            gaussian_delay,
+            should_skip_action,
+        )
+
+        total_liked = 0
+        if count <= 0:
+            return total_liked
+
+        if not self.followed_targets:
+            self._log_activity("like_comment", "skipped",
+                               error_message="Nenhum alvo ja seguido disponivel para likes em comentarios")
+            self._send("warning", message="Sem alvos ja seguidos para likes em comentarios.")
+            return total_liked
+
+        self._log_activity("like_comment", "success",
+                           error_message=f"Iniciando {count} likes em comentarios de alvos seguidos")
+
+        # Calculate how many targets we need to visit
+        targets_to_visit = ceil(count / max(1, per_target))
+
+        for target in self._cycle_followed_targets(targets_to_visit):
+            if not self.should_continue():
+                break
+            if total_liked >= count:
+                break
+            if total_liked >= MAX_COMMENT_LIKES_PER_DAY:
+                self._log_activity("like_comment", "warning",
+                                   error_message=f"Cap diario de {MAX_COMMENT_LIKES_PER_DAY} likes em comentarios atingido")
+                break
+
+            target_user = target.get("username", "").lstrip("@")
+            liked_this_target = 0
+
+            try:
+                # Navigate to target profile
+                self.driver.get(f"https://x.com/{target_user}")
+                time.sleep(random.uniform(3, 6))
+
+                # Handle profile page issues
+                page_status = self._handle_profile_page()
+                if page_status in ("not_found", "suspended"):
+                    self._log_activity("like_comment", "skipped", target_username=target_user,
+                                       error_message=f"Perfil {page_status} - alvo removido")
+                    self._remove_target(target_user, page_status)
+                    self._random_delay()
+                    continue
+
+                # Scroll profile naturally
+                self._scroll_profile()
+
+                # --- Find and open a post ---
+                attempts = 0
+                post_opened = False
+                while attempts < 4 and not post_opened:
+                    attempts += 1
+                    if not self.should_continue():
+                        break
+                    try:
+                        tweets = self.driver.find_elements("css selector", '[data-testid="tweet"]')
+                        if not tweets:
+                            self._scroll_naturally(1)
+                            continue
+
+                        visible_tweets = tweets[:min(5, len(tweets))]
+                        chosen_tweet = random.choice(visible_tweets)
+
+                        # Scroll to chosen tweet
+                        smooth_scroll_to_element(self.driver, chosen_tweet)
+                        time.sleep(random.uniform(1.0, 3.0))
+
+                        # Find clickable timestamp link
+                        clickable = None
+                        try:
+                            time_links = chosen_tweet.find_elements("css selector", "a[href*='/status/'] time")
+                            if time_links:
+                                clickable = time_links[0].find_element("xpath", "..")
+                        except Exception:
+                            pass
+                        if clickable is None:
+                            try:
+                                clickable = chosen_tweet.find_element("css selector", '[data-testid="tweetText"]')
+                            except Exception:
+                                pass
+
+                        if clickable is None:
+                            self._scroll_naturally(1)
+                            continue
+
+                        # Click to open the post
+                        from selenium.webdriver.common.action_chains import ActionChains
+                        ActionChains(self.driver).move_to_element(clickable).pause(
+                            random.uniform(0.3, 0.8)
+                        ).click().perform()
+
+                        # Wait for post page to load
+                        try:
+                            from selenium.webdriver.support.ui import WebDriverWait
+                            WebDriverWait(self.driver, 10).until(
+                                lambda d: "/status/" in d.current_url
+                            )
+                            post_opened = True
+                        except Exception:
+                            logger.warning(f"Post did not load for @{target_user}")
+                            continue
+
+                    except (StaleElementReferenceException, NoSuchElementException):
+                        self._scroll_naturally(1)
+                    except Exception as exc:
+                        logger.warning(f"Error opening post on @{target_user}: {exc}")
+                        self._scroll_naturally(1)
+
+                if not post_opened:
+                    self._log_activity("like_comment", "warning", target_username=target_user,
+                                       error_message="Nao conseguiu abrir post para curtir comentarios")
+                    try:
+                        if "/status/" in self.driver.current_url:
+                            self.driver.back()
+                            time.sleep(random.uniform(2.0, 4.0))
+                    except Exception:
+                        pass
+                    self._random_delay()
+                    continue
+
+                # Read the post first (natural behavior)
+                time.sleep(random.uniform(3.0, 8.0))
+
+                # --- Scroll to comments section ---
+                smooth_scroll(self.driver, random.randint(600, 900))
+                time.sleep(random.uniform(1.5, 3.0))
+
+                # Count available replies
+                try:
+                    reply_count = self.driver.execute_script(
+                        "const articles = document.querySelectorAll('article[data-testid=\"tweet\"]');"
+                        "if (articles.length <= 1) return 0;"
+                        "return articles.length - 1;"
+                    ) or 0
+                except WebDriverException:
+                    reply_count = 0
+
+                if reply_count == 0:
+                    self._log_activity("like_comment", "warning", target_username=target_user,
+                                       error_message="Post sem comentarios")
+                    logger.info(f"[{self.account['username']}] No comments on @{target_user} post")
+                    self.driver.back()
+                    time.sleep(random.uniform(2.0, 4.0))
+                    self._random_delay()
+                    continue
+
+                # --- Like comments loop ---
+                # Vary per_target slightly for humanization
+                effective_per_target = random.randint(max(1, per_target - 1), per_target + 1)
+                comments_to_like = min(effective_per_target, count - total_liked,
+                                       MAX_COMMENT_LIKES_PER_DAY - total_liked)
+
+                logger.info(f"[{self.account['username']}] Liking up to {comments_to_like} comments on @{target_user} ({reply_count} visible)")
+
+                comment_idx = 0
+                for _ in range(comments_to_like + 3):  # +3 buffer for skips
+                    if not self.should_continue():
+                        break
+                    if liked_this_target >= comments_to_like:
+                        break
+                    if total_liked >= count or total_liked >= MAX_COMMENT_LIKES_PER_DAY:
+                        break
+
+                    try:
+                        # Re-query articles (DOM changes after scrolling)
+                        articles = self.driver.find_elements("css selector", '[data-testid="tweet"]')
+                        # Skip first article (main post), get comments only
+                        comment_articles = articles[1:] if len(articles) > 1 else []
+
+                        if comment_idx >= len(comment_articles):
+                            # Try scrolling for more comments
+                            smooth_scroll(self.driver, random.randint(300, 600))
+                            time.sleep(random.uniform(1.0, 2.5))
+                            articles = self.driver.find_elements("css selector", '[data-testid="tweet"]')
+                            comment_articles = articles[1:] if len(articles) > 1 else []
+                            if comment_idx >= len(comment_articles):
+                                logger.info(f"[{self.account['username']}] No more comments to like on @{target_user}")
+                                break
+
+                        comment_el = comment_articles[comment_idx]
+                        comment_idx += 1
+
+                        # Skip chance — humanization
+                        if should_skip_action(skip_chance):
+                            logger.debug(f"Skipping comment randomly on @{target_user}")
+                            continue
+
+                        # Check if already liked (unlike button present)
+                        try:
+                            comment_el.find_element("css selector", '[data-testid="unlike"]')
+                            logger.debug(f"Comment already liked on @{target_user}, skipping")
+                            continue
+                        except NoSuchElementException:
+                            pass  # Not yet liked — good
+
+                        # Scroll to the comment
+                        smooth_scroll_to_element(self.driver, comment_el)
+
+                        # "Read" the comment before liking
+                        time.sleep(random.uniform(2.0, 5.0))
+
+                        # Find and click like button within this comment
+                        like_btn = comment_el.find_element("css selector", '[data-testid="like"]')
+                        like_btn.click()
+
+                        total_liked += 1
+                        liked_this_target += 1
+
+                        self._log_activity("like_comment", "success", target_username=target_user,
+                                           target_url=f"https://x.com/{target_user}")
+                        self._record_action(target_user, "like_comment", getattr(self, "_current_day", 1))
+                        self._send("action_complete", action="like_comment", target=target_user, progress=total_liked)
+                        logger.info(f"[{self.account['username']}] Comment like {total_liked}/{count} on @{target_user}")
+
+                        # Gaussian delay between comment likes
+                        mean_delay = (COMMENT_LIKE_DELAY_MIN + COMMENT_LIKE_DELAY_MAX) / 2
+                        std_delay = (COMMENT_LIKE_DELAY_MAX - COMMENT_LIKE_DELAY_MIN) / 4
+                        gaussian_delay(mean=mean_delay, std=std_delay,
+                                       minimum=COMMENT_LIKE_DELAY_MIN, maximum=COMMENT_LIKE_DELAY_MAX)
+
+                        # Scroll down slightly to next comment
+                        smooth_scroll(self.driver, random.randint(300, 600))
+                        time.sleep(random.uniform(1.0, 2.5))
+
+                        # Occasional scroll-up (10% chance) — mimics re-reading
+                        if random.random() < 0.10:
+                            smooth_scroll(self.driver, random.randint(100, 250), direction="up")
+                            time.sleep(random.uniform(1.0, 2.0))
+
+                    except (NoSuchElementException, StaleElementReferenceException):
+                        logger.debug(f"Comment element issue on @{target_user}, trying next")
+                        continue
+                    except Exception as exc:
+                        logger.warning(f"Comment like failed on @{target_user}: {exc}")
+                        self._log_activity("like_comment", "failed", target_username=target_user,
+                                           error_message=str(exc))
+                        break
+
+                # Navigate back to profile
+                try:
+                    self.driver.back()
+                    time.sleep(random.uniform(2.0, 4.0))
+                except Exception:
+                    pass
+
+                if liked_this_target > 0:
+                    self._log_activity("like_comment", "success", target_username=target_user,
+                                       error_message=f"{liked_this_target} comentarios curtidos em @{target_user}")
+
+            except Exception as exc:
+                logger.warning(f"Comment likes on @{target_user} failed: {exc}")
+                self._log_activity("like_comment", "failed", target_username=target_user,
+                                   error_message=str(exc))
+                # If stuck on /status/ page, go back
+                try:
+                    if "/status/" in self.driver.current_url:
+                        self.driver.back()
+                        time.sleep(random.uniform(2.0, 4.0))
+                except Exception:
+                    pass
+
+            self._random_delay()
+
+        self._log_activity("like_comment", "success",
+                           error_message=f"Likes em comentarios concluidos: {total_liked}/{count}")
+        logger.info(f"[{self.account['username']}] Comment likes done: {total_liked}/{count}")
+        return total_liked
+
+    # ------------------------------------------------------------------
     # Main run loop
     # ------------------------------------------------------------------
 
@@ -1053,6 +1360,7 @@ class TwitterWorker(BaseWorker):
             actions = Scheduler.get_today_actions(self.schedule_json, start_date)
             self._send("schedule", actions=actions)
             plan = (f"Dia {day_number} - Likes: {actions.get('likes',0)}, "
+                    f"Likes Coment.: {actions.get('comment_likes',0)}, "
                     f"Follows: {actions.get('follows',0)} (inclui {actions.get('follow_initial_count',0)} iniciais), "
                     f"Retweets: {actions.get('retweets',0)}, Unfollows: {actions.get('unfollows',0)}")
             self._log_activity("sistema", "success", error_message=f"Plano do dia: {plan}")
@@ -1159,6 +1467,25 @@ class TwitterWorker(BaseWorker):
             if not self.should_continue():
                 self._send("status", status="stopped", results=results)
                 return
+
+            # Comment likes on target profiles (after regular likes)
+            comment_likes_count = actions.get("comment_likes", 0)
+            if comment_likes_count > 0:
+                if browse_between_min > 0 or browse_between_max > 0:
+                    self._browse_feed(browse_between_min, browse_between_max,
+                                      posts_to_open=posts_to_open,
+                                      view_comments_chance=view_comments_chance)
+                    if not self.should_continue():
+                        self._send("status", status="stopped", results=results)
+                        return
+                results["comment_likes"] = self._execute_comment_likes(
+                    comment_likes_count,
+                    actions.get("comment_likes_per_target", 3),
+                    actions.get("comment_like_skip_chance", 0.25),
+                )
+                if not self.should_continue():
+                    self._send("status", status="stopped", results=results)
+                    return
 
             # Browse between likes -> follows
             follow_count = actions.get("follows", 0)

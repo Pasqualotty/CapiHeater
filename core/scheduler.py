@@ -92,7 +92,8 @@ class Scheduler:
         """
         schedule = cls._parse_schedule(schedule_json)
         if not schedule:
-            return {"likes": 0, "follows": 0, "retweets": 0, "unfollows": 0}
+            return {"likes": 0, "follows": 0, "retweets": 0, "unfollows": 0,
+                    "comment_likes": 0}
 
         day_number = cls.get_day_number(start_date)
 
@@ -101,7 +102,7 @@ class Scheduler:
 
         # Apply +-20% random variation and ensure non-negative integers
         actions = {}
-        for key in ("likes", "follows", "retweets", "unfollows"):
+        for key in ("likes", "follows", "retweets", "unfollows", "comment_likes"):
             base = entry.get(key, 0)
             varied = cls._apply_variation(base)
             actions[key] = varied
@@ -124,6 +125,10 @@ class Scheduler:
         actions["likes_on_feed"] = entry.get("likes_on_feed", False)
         actions["retweets_on_feed"] = entry.get("retweets_on_feed", False)
         actions["follow_initial_count"] = entry.get("follow_initial_count", 2)
+
+        # Comment likes behavior settings (no variation applied)
+        actions["comment_likes_per_target"] = entry.get("comment_likes_per_target", 3)
+        actions["comment_like_skip_chance"] = entry.get("comment_like_skip_chance", 0.25)
 
         return actions
 

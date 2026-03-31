@@ -67,6 +67,11 @@ MAX_PAGE_LOAD_WAIT = 7.0
 MIN_SCROLL_PAUSE = 0.5
 MAX_SCROLL_PAUSE = 2.5
 
+# Comment like delays (seconds)
+COMMENT_LIKE_DELAY_MIN = 4.0
+COMMENT_LIKE_DELAY_MAX = 12.0
+MAX_COMMENT_LIKES_PER_DAY = 50  # Global safety cap
+
 # Scroll behavior defaults
 DEFAULT_SCROLL_CONFIG = {
     "scroll_small_min": 200,

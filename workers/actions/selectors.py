@@ -9,7 +9,10 @@ Uses data-testid attributes where possible for stability.
 # Timeline
 # ======================================================================
 
-# Individual tweet article in the timeline
+# Individual tweet article in the timeline.
+# NOTE: On a /status/ page, the first TWEET_ARTICLE is the main post;
+# all subsequent ones are comments/replies. LIKE_BUTTON inside any
+# article element works the same for both posts and comments.
 TWEET_ARTICLE = '[data-testid="tweet"]'
 
 # The scrollable timeline container

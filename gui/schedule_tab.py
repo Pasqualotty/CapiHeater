@@ -116,9 +116,9 @@ class ScheduleTab(BaseTab):
 
         # Table
         self._table = QTableWidget()
-        self._table.setColumnCount(8)
+        self._table.setColumnCount(9)
         self._table.setHorizontalHeaderLabels([
-            "Dia", "Likes", "Follows", "Retweets", "Unfollows",
+            "Dia", "Likes", "Likes Coment.", "Follows", "Retweets", "Unfollows",
             "Feed Antes (seg)", "Feed Entre (seg)", "Abrir Posts",
         ])
         self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
@@ -130,7 +130,7 @@ class ScheduleTab(BaseTab):
 
         header = self._table.horizontalHeader()
         header.setStretchLastSection(True)
-        for col in range(8):
+        for col in range(9):
             header.setSectionResizeMode(col, QHeaderView.ResizeMode.Stretch)
 
         layout.addWidget(self._table, stretch=1)
@@ -210,6 +210,7 @@ class ScheduleTab(BaseTab):
             values = [
                 f"Dia {entry.get('day', '?')}",
                 str(entry.get("likes", 0)),
+                str(entry.get("comment_likes", 0)),
                 str(entry.get("follows", 0)),
                 str(entry.get("retweets", 0)),
                 str(entry.get("unfollows", 0)),
@@ -306,11 +307,13 @@ class ScheduleTab(BaseTab):
         next_day = max((d.get("day", 0) for d in days), default=0) + 1
 
         new_day = {
-            "day": next_day, "likes": 0, "follows": 0, "retweets": 0, "unfollows": 0,
+            "day": next_day, "likes": 0, "comment_likes": 0, "follows": 0, "retweets": 0, "unfollows": 0,
             "browse_before_min": 0, "browse_before_max": 0,
             "browse_between_min": 0, "browse_between_max": 0,
             "posts_to_open": 0, "view_comments_chance": 0.3,
-            "likes_on_feed": False, "retweets_on_feed": False, "follow_initial_count": 0,
+            "likes_on_feed": False, "retweets_on_feed": False,
+            "comment_likes_per_target": 3, "comment_like_skip_chance": 0.25,
+            "follow_initial_count": 0,
         }
         result = self._edit_day_dialog(new_day)
         if result:
@@ -599,7 +602,8 @@ class ScheduleTab(BaseTab):
             row.addStretch()
             main_layout.addLayout(row)
 
-        for label_text, key in [("Likes:", "likes"), ("Follows:", "follows"),
+        for label_text, key in [("Likes:", "likes"), ("Likes coment.:", "comment_likes"),
+                                ("Follows:", "follows"),
                                 ("Retweets:", "retweets"), ("Unfollows:", "unfollows")]:
             _add_spin_row(label_text, key)
 
@@ -683,6 +687,25 @@ class ScheduleTab(BaseTab):
         chk_rt_feed.setChecked(day.get("retweets_on_feed", False))
         main_layout.addWidget(chk_rt_feed)
 
+        _add_spin_row("Likes/alvo (coment.):", "comment_likes_per_target", max_val=10)
+        # Default to 3 for old schedules missing this field
+        if "comment_likes_per_target" not in day:
+            spins["comment_likes_per_target"].setValue(3)
+
+        # Comment like skip chance (stored as 0-1 float, edited as 0-100 int)
+        row_cls = QHBoxLayout()
+        lbl_cls = QLabel("Pular coment. (%):")
+        lbl_cls.setFixedWidth(120)
+        row_cls.addWidget(lbl_cls)
+        sp_cls = QSpinBox()
+        sp_cls.setRange(0, 100)
+        sp_cls.setValue(int(day.get("comment_like_skip_chance", 0.25) * 100))
+        sp_cls.setFixedWidth(80)
+        spins["comment_like_skip_chance"] = sp_cls
+        row_cls.addWidget(sp_cls)
+        row_cls.addStretch()
+        main_layout.addLayout(row_cls)
+
         _add_spin_row("Follows iniciais:", "follow_initial_count", max_val=10)
 
         # Buttons
@@ -700,6 +723,7 @@ class ScheduleTab(BaseTab):
             return {
                 "day": day.get("day", 1),
                 "likes": spins["likes"].value(),
+                "comment_likes": spins["comment_likes"].value(),
                 "follows": spins["follows"].value(),
                 "retweets": spins["retweets"].value(),
                 "unfollows": spins["unfollows"].value(),
@@ -711,6 +735,8 @@ class ScheduleTab(BaseTab):
                 "view_comments_chance": spins["view_comments_chance"].value() / 100.0,
                 "likes_on_feed": chk_likes_feed.isChecked(),
                 "retweets_on_feed": chk_rt_feed.isChecked(),
+                "comment_likes_per_target": spins["comment_likes_per_target"].value(),
+                "comment_like_skip_chance": spins["comment_like_skip_chance"].value() / 100.0,
                 "follow_initial_count": spins["follow_initial_count"].value(),
             }
         return None
