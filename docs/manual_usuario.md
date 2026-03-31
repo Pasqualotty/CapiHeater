@@ -105,6 +105,7 @@ O cronograma define quantas acoes o bot faz por dia e como ele se comporta.
 
 **Secao Acoes:**
 - **Likes** — quantas curtidas por dia
+- **Likes coment.** — quantas curtidas em comentarios de posts alvo por dia
 - **Follows** — quantos perfis seguir por dia
 - **Retweets** — quantos retweets por dia
 - **Unfollows** — quantos perfis deixar de seguir por dia
@@ -117,6 +118,8 @@ O cronograma define quantas acoes o bot faz por dia e como ele se comporta.
 - **Abrir postagens** — quantos posts o bot vai clicar para abrir e "ler" durante a navegacao
 - **Ver comentarios (%)** — chance de rolar ate os comentarios quando abrir um post (0-100%)
 - **Curtir no feed** — se marcado, curte posts no feed inicial. Se desmarcado, curte diretamente nos perfis alvo
+- **Likes/alvo (coment.)** — maximo de comentarios a curtir por perfil alvo visitado (default: 3)
+- **Pular coment. (%)** — chance de pular um comentario sem curtir, para humanizacao (default: 25%)
 - **Follows iniciais** — quantidade extra de follows feitos desde o dia 1, ideal para contas novas que precisam seguir gente para montar um feed
 
 **Outros botoes:**
@@ -193,7 +196,7 @@ A aba Logs mostra tudo que o bot fez.
 **Colunas:**
 - **Data/Hora** — quando a acao aconteceu
 - **Conta** — qual conta executou a acao
-- **Acao** — tipo de acao (like, follow, retweet, unfollow)
+- **Acao** — tipo de acao (like, like_comment, follow, retweet, unfollow)
 - **Alvo** — perfil alvo da acao
 - **Status** — se deu certo (success), falhou (failed) ou foi pulado (skipped)
 - **Erro** — mensagem de erro (se houver)
@@ -263,13 +266,14 @@ Quando voce inicia uma conta, o bot executa nesta ordem:
    - Abre e le postagens (se configurado)
    - Ve comentarios em alguns posts (se configurado)
 3. **Executa as curtidas** (no feed ou nos perfis alvo, conforme configurado)
-4. **Navega pelo feed** novamente (entre as acoes)
-5. **Segue os perfis alvo** configurados
-6. **Navega pelo feed** novamente (entre as acoes)
-7. **Faz retweets** no feed
-8. **Navega pelo feed** novamente (entre as acoes)
-9. **Faz unfollows** se configurado
-10. **Fecha o navegador** e marca como concluido
+4. **Curte comentarios** em posts de alvos ja seguidos (se configurado)
+5. **Navega pelo feed** novamente (entre as acoes)
+6. **Segue os perfis alvo** configurados
+7. **Navega pelo feed** novamente (entre as acoes)
+8. **Faz retweets** no feed
+9. **Navega pelo feed** novamente (entre as acoes)
+10. **Faz unfollows** se configurado
+11. **Fecha o navegador** e marca como concluido
 
 O dia seguinte, o programa automaticamente avanca para o proximo dia do cronograma com mais acoes.
 
