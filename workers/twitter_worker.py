@@ -451,7 +451,7 @@ class TwitterWorker(BaseWorker):
                     btn.click()
                     done += 1
                     self._send("action_complete", action="like", progress=done)
-                    self._log_activity("like", "success")
+                    self._log_activity("like", "success", error_message=f"Like {done}/{count}")
                     logger.info(f"[{self.account['username']}] Like {done}/{count}")
 
                     # Human-like pause after liking
@@ -567,7 +567,8 @@ class TwitterWorker(BaseWorker):
                     done += 1
                     self._send("action_complete", action="follow", target=target_user, progress=done)
                     self._log_activity("follow", "success", target_username=target_user,
-                                       target_url=f"https://x.com/{target_user}")
+                                       target_url=f"https://x.com/{target_user}",
+                                       error_message=f"Follow {done}/{count}")
                     self._record_action(target_user, "follow", getattr(self, "_current_day", 1))
                     # Add to followed targets for likes/RTs on profiles
                     if not any(t.get("username") == target_user for t in self.followed_targets):
@@ -656,7 +657,7 @@ class TwitterWorker(BaseWorker):
                         confirm[0].click()
                         done += 1
                         self._send("action_complete", action="retweet", progress=done)
-                        self._log_activity("retweet", "success")
+                        self._log_activity("retweet", "success", error_message=f"Retweet {done}/{count}")
                         logger.info(f"[{self.account['username']}] Retweet {done}/{count}")
 
                     self._random_delay()
@@ -703,6 +704,7 @@ class TwitterWorker(BaseWorker):
 
                 attempts = 0
                 max_attempts = 4
+                rt_success = False
                 while attempts < max_attempts:
                     attempts += 1
                     if not self.should_continue():
@@ -727,9 +729,11 @@ class TwitterWorker(BaseWorker):
                             if confirm:
                                 confirm[0].click()
                                 done += 1
+                                rt_success = True
                                 self._send("action_complete", action="retweet", target=target_user, progress=done)
                                 self._log_activity("retweet", "success", target_username=target_user,
-                                                   target_url=f"https://x.com/{target_user}")
+                                                   target_url=f"https://x.com/{target_user}",
+                                                   error_message=f"Retweet {done}/{count}")
                                 self._record_action(target_user, "retweet", getattr(self, "_current_day", 1))
                                 logger.info(f"[{self.account['username']}] RT on @{target_user} {done}/{count}")
                             break
@@ -740,11 +744,21 @@ class TwitterWorker(BaseWorker):
                         logger.warning(f"RT on profile @{target_user} failed: {exc}")
                         self._scroll_profile()
 
+                if not rt_success:
+                    self._log_activity("retweet", "skipped", target_username=target_user,
+                                       error_message=f"Nao encontrou tweet para RT em @{target_user}")
+                    logger.warning(f"[{self.account['username']}] No RT button found on @{target_user}")
+
                 self._random_delay()
 
             except Exception as exc:
                 logger.warning(f"RT on profile failed for {target.get('username')}: {exc}")
                 self._random_delay()
+
+        if done < count:
+            self._log_activity("retweet", "warning",
+                               error_message=f"Apenas {done}/{count} RTs realizados em perfis")
+            self._send("warning", message=f"Apenas {done}/{count} RTs em perfis realizados para @{self.account['username']}.")
 
         return done
 
@@ -795,7 +809,7 @@ class TwitterWorker(BaseWorker):
                         confirm[0].click()
                         done += 1
                         self._send("action_complete", action="unfollow", progress=done)
-                        self._log_activity("unfollow", "success")
+                        self._log_activity("unfollow", "success", error_message=f"Unfollow {done}/{count}")
                         logger.info(f"[{self.account['username']}] Unfollow {done}/{count}")
 
                     self._random_delay()
@@ -1003,7 +1017,8 @@ class TwitterWorker(BaseWorker):
                             like_btn.click()
                             done += 1
                             self._send("action_complete", action="like", target=target_user, progress=done)
-                            self._log_activity("like", "success", target_username=target_user, target_url=f"https://x.com/{target_user}")
+                            self._log_activity("like", "success", target_username=target_user, target_url=f"https://x.com/{target_user}",
+                                               error_message=f"Like {done}/{count}")
                             self._record_action(target_user, "like", getattr(self, "_current_day", 1))
                             logger.info(f"[{self.account['username']}] Like on @{target_user} profile {done}/{count}")
 
@@ -1085,8 +1100,10 @@ class TwitterWorker(BaseWorker):
         self._log_activity("like_comment", "success",
                            error_message=f"Iniciando {count} likes em comentarios de alvos seguidos")
 
-        # Calculate how many targets we need to visit
-        targets_to_visit = ceil(count / max(1, per_target))
+        # Calculate how many targets we need to visit (+extra buffer for posts without comments)
+        targets_to_visit = ceil(count / max(1, per_target)) + 3
+
+        failed_targets: set[str] = set()  # Targets where no comments were found
 
         for target in self._cycle_followed_targets(targets_to_visit):
             if not self.should_continue():
@@ -1099,6 +1116,11 @@ class TwitterWorker(BaseWorker):
                 break
 
             target_user = target.get("username", "").lstrip("@")
+
+            # Skip targets that already failed (no comments) to avoid infinite retries
+            if target_user in failed_targets:
+                continue
+
             liked_this_target = 0
 
             try:
@@ -1212,6 +1234,7 @@ class TwitterWorker(BaseWorker):
                     self._log_activity("like_comment", "warning", target_username=target_user,
                                        error_message="Post sem comentarios")
                     logger.info(f"[{self.account['username']}] No comments on @{target_user} post")
+                    failed_targets.add(target_user)
                     self.driver.back()
                     time.sleep(random.uniform(2.0, 4.0))
                     self._random_delay()
@@ -1280,7 +1303,8 @@ class TwitterWorker(BaseWorker):
                         liked_this_target += 1
 
                         self._log_activity("like_comment", "success", target_username=target_user,
-                                           target_url=f"https://x.com/{target_user}")
+                                           target_url=f"https://x.com/{target_user}",
+                                           error_message=f"Like comentario {total_liked}/{count}")
                         self._record_action(target_user, "like_comment", getattr(self, "_current_day", 1))
                         self._send("action_complete", action="like_comment", target=target_user, progress=total_liked)
                         logger.info(f"[{self.account['username']}] Comment like {total_liked}/{count} on @{target_user}")

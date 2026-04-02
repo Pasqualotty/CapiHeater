@@ -79,7 +79,7 @@ class LogsTab(BaseTab):
         filter_layout.addWidget(QLabel("Acao:"))
         self._filter_action = QComboBox()
         self._filter_action.addItems(
-            ["Todas", "like", "follow", "retweet", "unfollow", "login", "browse", "sistema"]
+            ["Todas", "like", "follow", "retweet", "unfollow", "like_comment", "login", "browse", "sistema"]
         )
         self._filter_action.setMinimumWidth(100)
         self._filter_action.currentIndexChanged.connect(lambda: self.refresh())
