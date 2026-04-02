@@ -1447,18 +1447,19 @@ class TwitterWorker(BaseWorker):
             # Filter out targets already followed (ANY day — follows should never repeat)
             already_followed = self._get_all_followed_targets()
 
-            # Build list of followed targets for likes/RTs on profiles
-            # Include full target data (action flags, rt_latest_post) from self.targets
-            all_targets_by_user = {t.get("username", "").lstrip("@"): t for t in self.targets}
-            self.followed_targets = []
+            # Build followed_targets = ALL active targets (for likes/RTs/comments on profiles)
+            # Plus any targets from action_history that are no longer in the active list
+            self.followed_targets = list(self.targets)
             if already_followed:
+                current_usernames = {t.get("username", "").lstrip("@") for t in self.targets}
                 for u in already_followed:
-                    full = all_targets_by_user.get(u)
-                    self.followed_targets.append(full if full else {"username": u})
-            if self.followed_targets:
-                self._log_activity("sistema", "success",
-                                   error_message=f"{len(self.followed_targets)} alvos ja seguidos disponiveis para likes/RTs em perfis")
+                    if u not in current_usernames:
+                        self.followed_targets.append({"username": u})
 
+            self._log_activity("sistema", "success",
+                               error_message=f"{len(self.followed_targets)} alvos disponiveis para likes/RTs em perfis")
+
+            # Filter self.targets to only unfollowed (for follow actions only)
             if already_followed:
                 before = len(self.targets)
                 self.targets = [t for t in self.targets
@@ -1466,13 +1467,17 @@ class TwitterWorker(BaseWorker):
                 filtered = before - len(self.targets)
                 if filtered > 0:
                     self._log_activity("sistema", "success",
-                                       error_message=f"{filtered} alvos filtrados (ja seguidos anteriormente)")
-                    logger.info(f"[{username}] Filtered {filtered} already-followed targets")
+                                       error_message=f"{filtered} alvos ja seguidos (filtrados da lista de follow)")
+                    logger.info(f"[{username}] Filtered {filtered} already-followed targets from follow list")
 
             if not self.targets:
-                self._log_activity("sistema", "warning",
-                                   error_message="TODOS os alvos foram filtrados (ja seguidos ou sem alvos na categoria)")
-                logger.warning(f"[{username}] All targets filtered out — none available")
+                if self.followed_targets:
+                    self._log_activity("sistema", "success",
+                                       error_message=f"Todos os alvos ja seguidos — likes/RTs/comentarios continuam normalmente")
+                else:
+                    self._log_activity("sistema", "warning",
+                                       error_message="Nenhum alvo disponivel (nenhum ativo na categoria)")
+                    logger.warning(f"[{username}] No targets available")
 
             # 2. Launch browser
             self._create_browser()
