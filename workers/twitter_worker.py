@@ -719,7 +719,9 @@ class TwitterWorker(BaseWorker):
                     self._random_delay()
                     continue
 
-                self._scroll_profile()
+                # Scroll a bit to load tweets (skip if targeting latest post)
+                if not target.get("rt_latest_post"):
+                    self._scroll_profile()
 
                 attempts = 0
                 max_attempts = 4
@@ -783,6 +785,158 @@ class TwitterWorker(BaseWorker):
             self._send("warning", message=f"Apenas {done}/{count} RTs em perfis realizados para @{self.account['username']}.")
 
         return done
+
+    def _execute_likes_and_rts_on_profiles(self, like_count: int, rt_count: int):
+        """Combined like + RT per target profile visit. Avoids visiting same profile twice."""
+        likes_done = 0
+        rts_done = 0
+
+        if not self.followed_targets:
+            self._log_activity("like", "skipped", error_message="Nenhum alvo disponivel para likes/RTs em perfis")
+            return likes_done, rts_done
+
+        total_visits = max(like_count, rt_count)
+        self._log_activity("sistema", "success",
+                           error_message=f"Iniciando {like_count} likes + {rt_count} RTs em perfis (modo combinado)")
+
+        for target in self._cycle_followed_targets(total_visits):
+            if not self.should_continue():
+                break
+            if likes_done >= like_count and rts_done >= rt_count:
+                break
+
+            target_user = target.get("username", "").lstrip("@")
+
+            try:
+                self.driver.get(f"https://x.com/{target_user}")
+                time.sleep(random.uniform(3, 6))
+
+                page_status = self._handle_profile_page()
+                if page_status in ("not_found", "suspended"):
+                    self._log_activity("sistema", "skipped", target_username=target_user,
+                                       error_message=f"Perfil {page_status} - alvo removido")
+                    self._remove_target(target_user, page_status)
+                    self._random_delay()
+                    continue
+
+                # Scroll only if NOT targeting latest post for both actions
+                want_latest = target.get("like_latest_post") or target.get("rt_latest_post")
+                if not want_latest:
+                    self._scroll_profile()
+
+                # --- Like ---
+                if likes_done < like_count and target.get("action_like", 1):
+                    try:
+                        tweets = self.driver.find_elements("css selector", '[data-testid="tweet"]')
+                        if tweets:
+                            if target.get("like_latest_post"):
+                                chosen = tweets[0]
+                            else:
+                                chosen = random.choice(tweets[:min(5, len(tweets))])
+
+                            smooth_scroll_to_element(self.driver, chosen)
+                            time.sleep(random.uniform(1.0, 3.0))
+
+                            # Open the post to like from inside
+                            clickable = None
+                            try:
+                                time_links = chosen.find_elements("css selector", "a[href*='/status/'] time")
+                                if time_links:
+                                    clickable = time_links[0].find_element("xpath", "..")
+                            except Exception:
+                                pass
+                            if clickable is None:
+                                try:
+                                    clickable = chosen.find_element("css selector", '[data-testid="tweetText"]')
+                                except Exception:
+                                    pass
+
+                            if clickable:
+                                from selenium.webdriver.common.action_chains import ActionChains
+                                ActionChains(self.driver).move_to_element(clickable).pause(
+                                    random.uniform(0.3, 0.8)
+                                ).click().perform()
+
+                                try:
+                                    from selenium.webdriver.support.ui import WebDriverWait
+                                    WebDriverWait(self.driver, 10).until(
+                                        lambda d: "/status/" in d.current_url
+                                    )
+                                except Exception:
+                                    pass
+
+                                time.sleep(random.uniform(3.0, 8.0))
+
+                                like_buttons = self.driver.find_elements("css selector", '[data-testid="like"]')
+                                if like_buttons:
+                                    like_btn = like_buttons[0]
+                                    smooth_scroll_to_element(self.driver, like_btn)
+                                    time.sleep(random.uniform(0.5, 1.5))
+                                    like_btn.click()
+                                    likes_done += 1
+                                    self._send("action_complete", action="like", target=target_user, progress=likes_done)
+                                    self._log_activity("like", "success", target_username=target_user,
+                                                       target_url=f"https://x.com/{target_user}",
+                                                       error_message=f"Like {likes_done}/{like_count}")
+                                    self._record_action(target_user, "like", getattr(self, "_current_day", 1))
+                                    logger.info(f"[{self.account['username']}] Like on @{target_user} {likes_done}/{like_count}")
+
+                                # Go back to profile for RT
+                                self.driver.back()
+                                time.sleep(random.uniform(2.0, 4.0))
+                    except Exception as exc:
+                        self._log_activity("like", "failed", target_username=target_user, error_message=str(exc))
+                        logger.warning(f"Like on @{target_user} failed: {exc}")
+                        # Try to go back to profile
+                        try:
+                            if "/status/" in self.driver.current_url:
+                                self.driver.back()
+                                time.sleep(random.uniform(2.0, 4.0))
+                        except Exception:
+                            pass
+
+                # --- RT ---
+                if rts_done < rt_count and target.get("action_retweet", 1):
+                    try:
+                        # Make sure we're on the profile page
+                        if "/status/" in self.driver.current_url:
+                            self.driver.back()
+                            time.sleep(random.uniform(2.0, 4.0))
+
+                        rt_buttons = self.driver.find_elements("css selector", '[data-testid="retweet"]')
+                        if rt_buttons:
+                            if target.get("rt_latest_post"):
+                                btn = rt_buttons[0]
+                            else:
+                                btn = random.choice(rt_buttons[:3]) if len(rt_buttons) > 1 else rt_buttons[0]
+
+                            self.driver.execute_script(
+                                "arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", btn)
+                            time.sleep(random.uniform(1.5, 3.0))
+                            btn.click()
+                            time.sleep(random.uniform(0.8, 1.5))
+
+                            confirm = self.driver.find_elements("css selector", '[data-testid="retweetConfirm"]')
+                            if confirm:
+                                confirm[0].click()
+                                rts_done += 1
+                                self._send("action_complete", action="retweet", target=target_user, progress=rts_done)
+                                self._log_activity("retweet", "success", target_username=target_user,
+                                                   target_url=f"https://x.com/{target_user}",
+                                                   error_message=f"Retweet {rts_done}/{rt_count}")
+                                self._record_action(target_user, "retweet", getattr(self, "_current_day", 1))
+                                logger.info(f"[{self.account['username']}] RT on @{target_user} {rts_done}/{rt_count}")
+                    except Exception as exc:
+                        self._log_activity("retweet", "failed", target_username=target_user, error_message=str(exc))
+                        logger.warning(f"RT on @{target_user} failed: {exc}")
+
+                self._random_delay()
+
+            except Exception as exc:
+                logger.warning(f"Like+RT on @{target_user} failed: {exc}")
+                self._random_delay()
+
+        return likes_done, rts_done
 
     def _execute_unfollows(self, count: int):
         """Unfollow accounts from the following list."""
@@ -971,8 +1125,9 @@ class TwitterWorker(BaseWorker):
                     self._random_delay()
                     continue
 
-                # Scroll a bit to load tweets
-                self._scroll_profile()
+                # Scroll a bit to load tweets (skip if targeting latest post)
+                if not target.get("like_latest_post"):
+                    self._scroll_profile()
 
                 attempts = 0
                 max_attempts = 4
@@ -1523,17 +1678,46 @@ class TwitterWorker(BaseWorker):
             # 5. Execute actions with browsing between them
             results = {}
 
-            # Likes: on feed (default) or on target profiles
             like_count = actions.get("likes", 0)
-            if likes_on_feed:
-                results["likes"] = self._execute_likes(like_count)
+            rt_count = actions.get("retweets", 0)
+
+            # Combined mode: when both likes AND retweets are on profiles,
+            # execute them together per target (like + RT on same visit)
+            # to avoid visiting the same profile twice
+            if not likes_on_feed and not retweets_on_feed and like_count > 0 and rt_count > 0:
+                likes_done, rts_done = self._execute_likes_and_rts_on_profiles(like_count, rt_count)
+                results["likes"] = likes_done
+                results["retweets"] = rts_done
             else:
-                results["likes"] = self._execute_likes_on_profiles(like_count)
+                # Separate execution (original flow)
+                if likes_on_feed:
+                    results["likes"] = self._execute_likes(like_count)
+                else:
+                    results["likes"] = self._execute_likes_on_profiles(like_count)
+
+                if not self.should_continue():
+                    self._send("status", status="stopped", results=results)
+                    return
+
+                # Browse between likes -> retweets
+                if rt_count > 0 and (browse_between_min > 0 or browse_between_max > 0):
+                    self._browse_feed(browse_between_min, browse_between_max,
+                                      posts_to_open=posts_to_open,
+                                      view_comments_chance=view_comments_chance)
+                    if not self.should_continue():
+                        self._send("status", status="stopped", results=results)
+                        return
+
+                if retweets_on_feed:
+                    results["retweets"] = self._execute_retweets(rt_count)
+                else:
+                    results["retweets"] = self._execute_retweets_on_profiles(rt_count)
+
             if not self.should_continue():
                 self._send("status", status="stopped", results=results)
                 return
 
-            # Comment likes on target profiles (after regular likes)
+            # Comment likes on target profiles
             comment_likes_count = actions.get("comment_likes", 0)
             if comment_likes_count > 0:
                 if browse_between_min > 0 or browse_between_max > 0:
@@ -1552,7 +1736,7 @@ class TwitterWorker(BaseWorker):
                     self._send("status", status="stopped", results=results)
                     return
 
-            # Browse between likes -> follows
+            # Browse between -> follows
             follow_count = actions.get("follows", 0)
             remaining_follows = max(0, follow_count - initial_follows_done)
             if remaining_follows > 0 and (browse_between_min > 0 or browse_between_max > 0):
@@ -1564,24 +1748,6 @@ class TwitterWorker(BaseWorker):
                     return
 
             results["follows"] = self._execute_follows(remaining_follows) + initial_follows_done
-            if not self.should_continue():
-                self._send("status", status="stopped", results=results)
-                return
-
-            # Browse between follows -> retweets
-            if actions.get("retweets", 0) > 0 and (browse_between_min > 0 or browse_between_max > 0):
-                self._browse_feed(browse_between_min, browse_between_max,
-                                  posts_to_open=posts_to_open,
-                                  view_comments_chance=view_comments_chance)
-                if not self.should_continue():
-                    self._send("status", status="stopped", results=results)
-                    return
-
-            rt_count = actions.get("retweets", 0)
-            if retweets_on_feed:
-                results["retweets"] = self._execute_retweets(rt_count)
-            else:
-                results["retweets"] = self._execute_retweets_on_profiles(rt_count)
             if not self.should_continue():
                 self._send("status", status="stopped", results=results)
                 return
