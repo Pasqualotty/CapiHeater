@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QSpinBox,
+    QStackedWidget,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -27,7 +28,7 @@ from PySide6.QtWidgets import (
 )
 
 from gui.base import BaseTab
-from gui.theme import BG_DARK, BG_SECONDARY, FG_MUTED, FG_TEXT
+from gui.theme import ACCENT, BG_DARK, BG_SECONDARY, FG_MUTED, FG_TEXT
 
 
 class ScheduleTab(BaseTab):
@@ -560,156 +561,165 @@ class ScheduleTab(BaseTab):
     # ==================================================================
 
     def _edit_day_dialog(self, day: dict) -> dict | None:
-        """Show a dialog to edit a single day's values. Returns updated dict or None."""
+        """Show a tabbed dialog to edit a single day's values. Returns updated dict or None."""
         dlg = QDialog(self)
         dlg.setModal(True)
         dlg.setWindowTitle(f"Dia {day.get('day', '?')}")
-        dlg.setFixedWidth(420)
+        dlg.setFixedWidth(700)
         dlg.setStyleSheet(f"QDialog {{ background-color: {BG_DARK}; }}")
 
         main_layout = QVBoxLayout(dlg)
-        main_layout.setContentsMargins(24, 16, 24, 16)
-        main_layout.setSpacing(4)
+        main_layout.setContentsMargins(20, 14, 20, 14)
+        main_layout.setSpacing(8)
 
         # Title
         title = QLabel(f"Editar Dia {day.get('day', '?')}")
         title.setStyleSheet("font-size: 13pt; font-weight: bold; color: #ffffff;")
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         main_layout.addWidget(title)
-        main_layout.addSpacing(8)
 
-        section_style = "font-weight: bold; color: #5588cc; font-size: 10pt;"
-        hint_style = f"color: {FG_MUTED}; font-size: 8pt;"
+        # --- Tab button bar ---
+        tab_bar = QHBoxLayout()
+        tab_bar.setSpacing(0)
+        stack = QStackedWidget()
 
-        # --- Actions section ---
-        sec_actions = QLabel("Acoes")
-        sec_actions.setStyleSheet(section_style)
-        main_layout.addWidget(sec_actions)
+        tab_btn_style = (
+            "QPushButton {{ background: {bg}; color: {fg}; border: none; "
+            "padding: 8px 20px; font-size: 10pt; font-weight: bold; "
+            "border-bottom: 2px solid {border}; }}"
+        )
+        tab_buttons: list[QPushButton] = []
+        tab_names = ["Acoes", "Feed", "Comportamento"]
+
+        def _switch_tab(index: int) -> None:
+            stack.setCurrentIndex(index)
+            for i, btn in enumerate(tab_buttons):
+                if i == index:
+                    btn.setStyleSheet(tab_btn_style.format(
+                        bg=BG_SECONDARY, fg="#ffffff", border=ACCENT))
+                else:
+                    btn.setStyleSheet(tab_btn_style.format(
+                        bg=BG_DARK, fg=FG_MUTED, border="transparent"))
+
+        for i, name in enumerate(tab_names):
+            btn = QPushButton(name)
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn.clicked.connect(lambda checked=False, idx=i: _switch_tab(idx))
+            tab_buttons.append(btn)
+            tab_bar.addWidget(btn)
+
+        main_layout.addLayout(tab_bar)
+        main_layout.addWidget(stack)
 
         spins: dict[str, QSpinBox] = {}
+        hint_style = f"color: {FG_MUTED}; font-size: 8pt;"
 
-        def _add_spin_row(label_text: str, key: str, max_val: int = 100) -> None:
-            row = QHBoxLayout()
-            lbl = QLabel(label_text)
-            lbl.setFixedWidth(120)
-            row.addWidget(lbl)
+        def _make_spin(key: str, val: int, max_val: int = 100, width: int = 80) -> QSpinBox:
             sp = QSpinBox()
             sp.setRange(0, max_val)
-            sp.setValue(day.get(key, 0))
-            sp.setFixedWidth(80)
+            sp.setValue(val)
+            sp.setFixedWidth(width)
             spins[key] = sp
-            row.addWidget(sp)
-            row.addStretch()
-            main_layout.addLayout(row)
+            return sp
 
+        # ====================== PAGE 0: Acoes ======================
+        page_actions = QWidget()
+        pa_layout = QVBoxLayout(page_actions)
+        pa_layout.setContentsMargins(16, 16, 16, 16)
+        pa_layout.setSpacing(10)
+
+        form_actions = QFormLayout()
+        form_actions.setHorizontalSpacing(16)
+        form_actions.setVerticalSpacing(10)
         for label_text, key in [("Likes:", "likes"), ("Likes coment.:", "comment_likes"),
                                 ("Follows:", "follows"),
                                 ("Retweets:", "retweets"), ("Unfollows:", "unfollows")]:
-            _add_spin_row(label_text, key)
+            form_actions.addRow(label_text, _make_spin(key, day.get(key, 0)))
+        pa_layout.addLayout(form_actions)
 
         variation_hint = QLabel(
             "Os valores acima variam automaticamente em +/-20% para simular comportamento humano."
         )
         variation_hint.setStyleSheet(hint_style)
         variation_hint.setWordWrap(True)
-        main_layout.addWidget(variation_hint)
+        pa_layout.addWidget(variation_hint)
+        pa_layout.addStretch()
+        stack.addWidget(page_actions)
 
-        # --- Feed browsing section ---
-        main_layout.addSpacing(8)
-        sec_feed = QLabel("Navegar pelo Feed (segundos)")
-        sec_feed.setStyleSheet(section_style)
-        main_layout.addWidget(sec_feed)
+        # ====================== PAGE 1: Feed ======================
+        page_feed = QWidget()
+        pf_layout = QVBoxLayout(page_feed)
+        pf_layout.setContentsMargins(16, 16, 16, 16)
+        pf_layout.setSpacing(10)
 
-        sub_lbl1 = QLabel("Antes das acoes (seg):")
-        sub_lbl1.setStyleSheet(f"color: {FG_MUTED}; font-size: 9pt;")
-        main_layout.addWidget(sub_lbl1)
-
-        def _add_min_max_row(key_min: str, key_max: str) -> None:
+        def _add_min_max_section(parent_layout, title_text: str, key_min: str, key_max: str):
+            lbl = QLabel(title_text)
+            lbl.setStyleSheet(f"color: {FG_MUTED}; font-size: 9pt;")
+            parent_layout.addWidget(lbl)
             row = QHBoxLayout()
             row.addWidget(QLabel("Min:"))
-            sp_min = QSpinBox()
-            sp_min.setRange(0, 3600)
-            sp_min.setValue(day.get(key_min, 0))
-            sp_min.setFixedWidth(70)
-            spins[key_min] = sp_min
-            row.addWidget(sp_min)
-            row.addSpacing(12)
+            row.addWidget(_make_spin(key_min, day.get(key_min, 0), max_val=3600, width=70))
+            row.addSpacing(20)
             row.addWidget(QLabel("Max:"))
-            sp_max = QSpinBox()
-            sp_max.setRange(0, 3600)
-            sp_max.setValue(day.get(key_max, 0))
-            sp_max.setFixedWidth(70)
-            spins[key_max] = sp_max
-            row.addWidget(sp_max)
+            row.addWidget(_make_spin(key_max, day.get(key_max, 0), max_val=3600, width=70))
             row.addStretch()
-            main_layout.addLayout(row)
+            parent_layout.addLayout(row)
 
-        _add_min_max_row("browse_before_min", "browse_before_max")
-
-        sub_lbl2 = QLabel("Entre as acoes (seg):")
-        sub_lbl2.setStyleSheet(f"color: {FG_MUTED}; font-size: 9pt;")
-        main_layout.addWidget(sub_lbl2)
-
-        _add_min_max_row("browse_between_min", "browse_between_max")
+        _add_min_max_section(pf_layout, "Antes das acoes (segundos):",
+                             "browse_before_min", "browse_before_max")
+        pf_layout.addSpacing(8)
+        _add_min_max_section(pf_layout, "Entre as acoes (segundos):",
+                             "browse_between_min", "browse_between_max")
 
         feed_hint = QLabel("Ex: Antes 120-300 seg, Entre 30-90 seg")
         feed_hint.setStyleSheet("color: #666688; font-size: 8pt;")
-        main_layout.addWidget(feed_hint)
+        pf_layout.addWidget(feed_hint)
+        pf_layout.addStretch()
+        stack.addWidget(page_feed)
 
-        # --- Comportamento section ---
-        main_layout.addSpacing(8)
-        sec_behavior = QLabel("Comportamento")
-        sec_behavior.setStyleSheet(section_style)
-        main_layout.addWidget(sec_behavior)
+        # ====================== PAGE 2: Comportamento ======================
+        page_behavior = QWidget()
+        pb_layout = QVBoxLayout(page_behavior)
+        pb_layout.setContentsMargins(16, 16, 16, 16)
+        pb_layout.setSpacing(10)
 
-        _add_spin_row("Abrir postagens:", "posts_to_open", max_val=20)
+        form_behavior = QFormLayout()
+        form_behavior.setHorizontalSpacing(16)
+        form_behavior.setVerticalSpacing(10)
 
-        # View comments chance (stored as 0-1 float, edited as 0-100 int)
-        row_vcc = QHBoxLayout()
-        lbl_vcc = QLabel("Ver comentarios (%):")
-        lbl_vcc.setFixedWidth(120)
-        row_vcc.addWidget(lbl_vcc)
-        sp_vcc = QSpinBox()
-        sp_vcc.setRange(0, 100)
-        sp_vcc.setValue(int(day.get("view_comments_chance", 0.3) * 100))
-        sp_vcc.setFixedWidth(80)
-        spins["view_comments_chance"] = sp_vcc
-        row_vcc.addWidget(sp_vcc)
-        row_vcc.addStretch()
-        main_layout.addLayout(row_vcc)
+        form_behavior.addRow("Abrir postagens:",
+                             _make_spin("posts_to_open", day.get("posts_to_open", 0), max_val=20))
+        form_behavior.addRow("Ver comentarios (%):",
+                             _make_spin("view_comments_chance",
+                                        int(day.get("view_comments_chance", 0.3) * 100)))
 
-        # Checkboxes
+        clpt_val = day.get("comment_likes_per_target", 3)
+        form_behavior.addRow("Likes/alvo (coment.):",
+                             _make_spin("comment_likes_per_target", clpt_val, max_val=10))
+
+        form_behavior.addRow("Pular coment. (%):",
+                             _make_spin("comment_like_skip_chance",
+                                        int(day.get("comment_like_skip_chance", 0.25) * 100)))
+        form_behavior.addRow("Follows iniciais:",
+                             _make_spin("follow_initial_count",
+                                        day.get("follow_initial_count", 0), max_val=10))
+        pb_layout.addLayout(form_behavior)
+
         chk_likes_feed = QCheckBox("Curtir no feed")
         chk_likes_feed.setChecked(day.get("likes_on_feed", False))
-        main_layout.addWidget(chk_likes_feed)
+        pb_layout.addWidget(chk_likes_feed)
 
         chk_rt_feed = QCheckBox("RT no feed")
         chk_rt_feed.setChecked(day.get("retweets_on_feed", False))
-        main_layout.addWidget(chk_rt_feed)
+        pb_layout.addWidget(chk_rt_feed)
 
-        _add_spin_row("Likes/alvo (coment.):", "comment_likes_per_target", max_val=10)
-        # Default to 3 for old schedules missing this field
-        if "comment_likes_per_target" not in day:
-            spins["comment_likes_per_target"].setValue(3)
+        pb_layout.addStretch()
+        stack.addWidget(page_behavior)
 
-        # Comment like skip chance (stored as 0-1 float, edited as 0-100 int)
-        row_cls = QHBoxLayout()
-        lbl_cls = QLabel("Pular coment. (%):")
-        lbl_cls.setFixedWidth(120)
-        row_cls.addWidget(lbl_cls)
-        sp_cls = QSpinBox()
-        sp_cls.setRange(0, 100)
-        sp_cls.setValue(int(day.get("comment_like_skip_chance", 0.25) * 100))
-        sp_cls.setFixedWidth(80)
-        spins["comment_like_skip_chance"] = sp_cls
-        row_cls.addWidget(sp_cls)
-        row_cls.addStretch()
-        main_layout.addLayout(row_cls)
+        # Select first tab
+        _switch_tab(0)
 
-        _add_spin_row("Follows iniciais:", "follow_initial_count", max_val=10)
-
-        # Buttons
-        main_layout.addSpacing(12)
+        # --- Save / Cancel ---
         button_box = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel
         )

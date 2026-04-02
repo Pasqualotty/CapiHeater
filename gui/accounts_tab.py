@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
+    QStackedWidget,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -30,9 +31,11 @@ from PySide6.QtWidgets import (
 
 from gui.base import BaseTab
 from gui.theme import (
+    ACCENT,
     BG_DARK,
     BG_INPUT,
     BG_SECONDARY,
+    FG_MUTED,
     FG_TEXT,
     ACCENT_HIGHLIGHT,
 )
@@ -301,22 +304,75 @@ class AccountsTab(BaseTab):
     def _open_account_form(self, title: str, account: dict | None) -> None:
         dlg = QDialog(self)
         dlg.setWindowTitle(title)
-        dlg.setFixedSize(460, 580)
+        dlg.setFixedWidth(700)
         dlg.setModal(True)
 
-        layout = QVBoxLayout(dlg)
-        layout.setSpacing(6)
-        layout.setContentsMargins(12, 12, 12, 12)
+        main_layout = QVBoxLayout(dlg)
+        main_layout.setSpacing(8)
+        main_layout.setContentsMargins(20, 14, 20, 14)
 
-        # Username
-        layout.addWidget(QLabel("Usuario (sem @):"))
+        # --- Tab button bar ---
+        tab_bar = QHBoxLayout()
+        tab_bar.setSpacing(0)
+        stack = QStackedWidget()
+
+        tab_btn_style = (
+            "QPushButton {{ background: {bg}; color: {fg}; border: none; "
+            "padding: 8px 20px; font-size: 10pt; font-weight: bold; "
+            "border-bottom: 2px solid {border}; }}"
+        )
+        tab_buttons: list[QPushButton] = []
+        tab_names = ["Conta", "Conexao", "Cronograma", "Categorias", "Extras"]
+
+        def _switch_tab(index: int) -> None:
+            stack.setCurrentIndex(index)
+            for i, btn in enumerate(tab_buttons):
+                if i == index:
+                    btn.setStyleSheet(tab_btn_style.format(
+                        bg=BG_SECONDARY, fg="#ffffff", border=ACCENT))
+                else:
+                    btn.setStyleSheet(tab_btn_style.format(
+                        bg=BG_DARK, fg=FG_MUTED, border="transparent"))
+
+        for i, name in enumerate(tab_names):
+            btn = QPushButton(name)
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn.clicked.connect(lambda checked=False, idx=i: _switch_tab(idx))
+            tab_buttons.append(btn)
+            tab_bar.addWidget(btn)
+
+        main_layout.addLayout(tab_bar)
+        main_layout.addWidget(stack)
+
+        # ====================== PAGE 0: Conta ======================
+        page_account = QWidget()
+        pa_layout = QVBoxLayout(page_account)
+        pa_layout.setContentsMargins(16, 16, 16, 16)
+        pa_layout.setSpacing(10)
+
+        pa_layout.addWidget(QLabel("Usuario (sem @):"))
         ent_user = QLineEdit()
         if account:
             ent_user.setText(account.get("username", ""))
-        layout.addWidget(ent_user)
+        pa_layout.addWidget(ent_user)
 
-        # Cookies file
-        layout.addWidget(QLabel("Arquivo de Cookies (.json / .txt):"))
+        pa_layout.addWidget(QLabel("Notas:"))
+        txt_notes = QPlainTextEdit()
+        txt_notes.setMaximumHeight(90)
+        if account and account.get("notes"):
+            txt_notes.setPlainText(account["notes"])
+        pa_layout.addWidget(txt_notes)
+
+        pa_layout.addStretch()
+        stack.addWidget(page_account)
+
+        # ====================== PAGE 1: Conexao ======================
+        page_conn = QWidget()
+        pc_layout = QVBoxLayout(page_conn)
+        pc_layout.setContentsMargins(16, 16, 16, 16)
+        pc_layout.setSpacing(10)
+
+        pc_layout.addWidget(QLabel("Arquivo de Cookies (.json / .txt):"))
         cookie_row = QHBoxLayout()
         ent_cookie = QLineEdit()
         cookie_row.addWidget(ent_cookie)
@@ -334,20 +390,28 @@ class AccountsTab(BaseTab):
         btn_browse = QPushButton("Procurar...")
         btn_browse.clicked.connect(browse_cookies)
         cookie_row.addWidget(btn_browse)
-        layout.addLayout(cookie_row)
+        pc_layout.addLayout(cookie_row)
 
-        # Proxy
-        layout.addWidget(QLabel("Proxy (opcional):"))
+        pc_layout.addSpacing(8)
+        pc_layout.addWidget(QLabel("Proxy (opcional):"))
         ent_proxy = QLineEdit()
         if account and account.get("proxy"):
             ent_proxy.setText(account["proxy"])
-        layout.addWidget(ent_proxy)
+        pc_layout.addWidget(ent_proxy)
 
         from gui.proxy_tester import create_proxy_test_row
-        layout.addWidget(create_proxy_test_row(ent_proxy))
+        pc_layout.addWidget(create_proxy_test_row(ent_proxy))
 
-        # Schedule dropdown
-        layout.addWidget(QLabel("Cronograma:"))
+        pc_layout.addStretch()
+        stack.addWidget(page_conn)
+
+        # ====================== PAGE 2: Cronograma ======================
+        page_sched = QWidget()
+        ps_layout = QVBoxLayout(page_sched)
+        ps_layout.setContentsMargins(16, 16, 16, 16)
+        ps_layout.setSpacing(10)
+
+        ps_layout.addWidget(QLabel("Cronograma:"))
         schedule_names = self._get_schedule_names()
         schedule_list = list(schedule_names.values()) or ["Padrao"]
         schedule_ids = list(schedule_names.keys()) or [1]
@@ -359,30 +423,10 @@ class AccountsTab(BaseTab):
             combo_sched.setCurrentIndex(idx)
         elif schedule_list:
             combo_sched.setCurrentIndex(0)
-        layout.addWidget(combo_sched)
+        ps_layout.addWidget(combo_sched)
 
-        # Categories (multi-select list)
-        layout.addWidget(QLabel("Categorias (Ctrl+clique para multiplas):"))
-        cat_names = self.app.category_manager.get_category_names()
-        cat_list = list(cat_names.values())
-        cat_ids = list(cat_names.keys())
-
-        cat_listwidget = QListWidget()
-        cat_listwidget.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
-        cat_listwidget.setMaximumHeight(90)
-        cat_listwidget.addItems(cat_list)
-
-        # Pre-select existing categories
-        if account:
-            existing_cats = set(self.app.category_manager.get_account_categories(account["id"]))
-            for i, cid in enumerate(cat_ids):
-                if cid in existing_cats:
-                    cat_listwidget.item(i).setSelected(True)
-
-        layout.addWidget(cat_listwidget)
-
-        # Scroll config
-        layout.addWidget(QLabel("Perfil de rolagem:"))
+        ps_layout.addSpacing(12)
+        ps_layout.addWidget(QLabel("Perfil de rolagem:"))
         scroll_preset_names = ["Padrao Global", "Lento", "Normal", "Rapido", "Super Rapido", "Ultra Rapido"]
         combo_scroll = QComboBox()
         combo_scroll.addItems(scroll_preset_names)
@@ -415,17 +459,47 @@ class AccountsTab(BaseTab):
         else:
             combo_scroll.setCurrentText("Padrao Global")
 
-        layout.addWidget(combo_scroll)
+        ps_layout.addWidget(combo_scroll)
+        ps_layout.addStretch()
+        stack.addWidget(page_sched)
 
-        # Notes
-        layout.addWidget(QLabel("Notas:"))
-        txt_notes = QPlainTextEdit()
-        txt_notes.setMaximumHeight(72)
-        if account and account.get("notes"):
-            txt_notes.setPlainText(account["notes"])
-        layout.addWidget(txt_notes)
+        # ====================== PAGE 3: Categorias ======================
+        page_cats = QWidget()
+        pcat_layout = QVBoxLayout(page_cats)
+        pcat_layout.setContentsMargins(16, 16, 16, 16)
+        pcat_layout.setSpacing(10)
 
-        # Save button
+        pcat_layout.addWidget(QLabel("Categorias (Ctrl+clique para multiplas):"))
+        cat_names = self.app.category_manager.get_category_names()
+        cat_list = list(cat_names.values())
+        cat_ids = list(cat_names.keys())
+
+        cat_listwidget = QListWidget()
+        cat_listwidget.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        cat_listwidget.addItems(cat_list)
+
+        if account:
+            existing_cats = set(self.app.category_manager.get_account_categories(account["id"]))
+            for i, cid in enumerate(cat_ids):
+                if cid in existing_cats:
+                    cat_listwidget.item(i).setSelected(True)
+
+        pcat_layout.addWidget(cat_listwidget)
+        stack.addWidget(page_cats)
+
+        # ====================== PAGE 4: Extras ======================
+        page_extras = QWidget()
+        pe_layout = QVBoxLayout(page_extras)
+        pe_layout.setContentsMargins(16, 16, 16, 16)
+        pe_layout.setSpacing(10)
+        pe_layout.addWidget(QLabel("Nenhuma configuracao extra disponivel no momento."))
+        pe_layout.addStretch()
+        stack.addWidget(page_extras)
+
+        # Select first tab
+        _switch_tab(0)
+
+        # --- Save button ---
         def save():
             username = ent_user.text().strip().lstrip("@")
             if not username:
@@ -437,7 +511,6 @@ class AccountsTab(BaseTab):
             sched_id = schedule_ids[sched_idx] if sched_idx >= 0 else 1
             notes = txt_notes.toPlainText().strip()
 
-            # Resolve scroll config from preset selection
             scroll_choice = combo_scroll.currentText()
             if scroll_choice == "Padrao Global":
                 scroll_config_json = None
@@ -447,11 +520,9 @@ class AccountsTab(BaseTab):
                 preset_data = SCROLL_PRESETS.get(scroll_choice)
                 scroll_config_json = json.dumps(preset_data if preset_data else DEFAULT_SCROLL_CONFIG)
 
-            # Get selected categories
             selected_cat_ids = [cat_ids[i] for i in range(cat_listwidget.count()) if cat_listwidget.item(i).isSelected()]
 
             if account:
-                # Edit mode
                 updates = {
                     "username": username,
                     "proxy": proxy,
@@ -468,7 +539,6 @@ class AccountsTab(BaseTab):
                 self.app.category_manager.set_account_categories(account["id"], selected_cat_ids)
                 self.app.set_status(f"Conta @{username} atualizada")
             else:
-                # Add mode
                 cookie_path = ent_cookie.text().strip()
                 if not cookie_path:
                     QMessageBox.critical(dlg, "Erro", "Selecione o arquivo de cookies.")
@@ -484,7 +554,6 @@ class AccountsTab(BaseTab):
                     schedule_id=sched_id,
                     start_date=date.today().isoformat(),
                 )
-                # Save per-account scroll config if not global default
                 if scroll_config_json is not None:
                     self.app.account_manager.update_account(new_id, scroll_config=scroll_config_json)
                 if selected_cat_ids:
@@ -494,11 +563,10 @@ class AccountsTab(BaseTab):
             dlg.accept()
             self.refresh()
 
-        layout.addStretch()
         btn_save = QPushButton("Salvar")
         btn_save.setObjectName("accent")
         btn_save.clicked.connect(save)
-        layout.addWidget(btn_save)
+        main_layout.addWidget(btn_save)
 
         dlg.exec()
 
