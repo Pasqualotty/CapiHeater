@@ -2,6 +2,7 @@
 TargetsTab - CRUD interface for managing target accounts/URLs.
 """
 
+import json
 import re
 import webbrowser
 
@@ -11,6 +12,7 @@ from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
     QDialog,
+    QFileDialog,
     QHBoxLayout,
     QHeaderView,
     QLabel,
@@ -96,6 +98,14 @@ class TargetsTab(BaseTab):
         btn_cats = QPushButton("Categorias")
         btn_cats.clicked.connect(self._manage_categories)
         toolbar.addWidget(btn_cats)
+
+        btn_export = QPushButton("Exportar")
+        btn_export.clicked.connect(self._on_export)
+        toolbar.addWidget(btn_export)
+
+        btn_import = QPushButton("Importar")
+        btn_import.clicked.connect(self._on_import)
+        toolbar.addWidget(btn_import)
 
         layout.addLayout(toolbar)
 
@@ -697,4 +707,135 @@ class TargetsTab(BaseTab):
             self.app.target_manager.toggle_active(tid)
 
         self.app.set_status(f"{len(ids)} alvo(s) alternado(s)")
+        self.refresh()
+
+    # ==================================================================
+    # Export / Import
+    # ==================================================================
+
+    def _on_export(self) -> None:
+        """Export all targets to a JSON file."""
+        targets = self.app.target_manager.get_targets(active_only=False)
+        if not targets:
+            QMessageBox.warning(self, "Aviso", "Nenhum alvo para exportar.")
+            return
+
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Exportar Alvos", "alvos.json", "JSON (*.json)"
+        )
+        if not path:
+            return
+
+        export_list = []
+        for t in targets:
+            cat_names = self.app.category_manager.get_target_category_names(t["id"])
+            export_list.append({
+                "username": t.get("username", ""),
+                "url": t.get("url", ""),
+                "priority": t.get("priority", 1),
+                "active": bool(t.get("active", 1)),
+                "categories": cat_names,
+            })
+
+        export_data = {
+            "capiheater_targets": True,
+            "version": 1,
+            "targets": export_list,
+        }
+
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(export_data, f, indent=2, ensure_ascii=False)
+            QMessageBox.information(
+                self, "Sucesso",
+                f"{len(export_list)} alvo(s) exportado(s) com sucesso!"
+            )
+        except Exception as exc:
+            QMessageBox.critical(self, "Erro", f"Falha ao exportar:\n{exc}")
+
+    def _on_import(self) -> None:
+        """Import targets from a JSON file."""
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Importar Alvos", "", "JSON (*.json);;Todos (*.*)"
+        )
+        if not path:
+            return
+
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception as exc:
+            QMessageBox.critical(self, "Erro", f"Falha ao ler arquivo:\n{exc}")
+            return
+
+        # Accept envelope format or raw array
+        if isinstance(data, dict) and "targets" in data:
+            targets = data["targets"]
+        elif isinstance(data, list):
+            targets = data
+        else:
+            QMessageBox.critical(
+                self, "Erro",
+                "Formato invalido. O arquivo deve conter alvos CapiHeater\n"
+                "ou um array JSON de alvos.",
+            )
+            return
+
+        if not targets or not isinstance(targets, list):
+            QMessageBox.critical(self, "Erro", "Nenhum alvo encontrado no arquivo.")
+            return
+
+        # Get existing usernames to skip duplicates
+        existing = {t.get("username", "").lower()
+                    for t in self.app.target_manager.get_targets(active_only=False)}
+
+        # Get all category names for auto-creation
+        all_cats = self.app.category_manager.get_category_names()  # {id: name}
+        cat_name_to_id = {name: cid for cid, name in all_cats.items()}
+
+        added = 0
+        skipped = 0
+        for item in targets:
+            if not isinstance(item, dict):
+                continue
+            username = item.get("username", "").strip().lstrip("@")
+            if not username:
+                continue
+            if username.lower() in existing:
+                skipped += 1
+                continue
+
+            url = item.get("url", f"https://x.com/{username}")
+            priority = item.get("priority", 1)
+            if priority not in (1, 2, 3):
+                priority = 1
+
+            tid = self.app.target_manager.add_target(
+                username=username, url=url, priority=priority
+            )
+
+            # Set active status
+            if not item.get("active", True):
+                self.app.target_manager.toggle_active(tid)
+
+            # Handle categories
+            cat_ids = []
+            for cat_name in item.get("categories", []):
+                if cat_name in cat_name_to_id:
+                    cat_ids.append(cat_name_to_id[cat_name])
+                else:
+                    # Auto-create missing categories
+                    new_id = self.app.category_manager.add_category(cat_name)
+                    cat_name_to_id[cat_name] = new_id
+                    cat_ids.append(new_id)
+            if cat_ids:
+                self.app.category_manager.set_target_categories(tid, cat_ids)
+
+            existing.add(username.lower())
+            added += 1
+
+        msg = f"{added} alvo(s) importado(s)!"
+        if skipped:
+            msg += f"\n{skipped} duplicado(s) ignorado(s)."
+        QMessageBox.information(self, "Sucesso", msg)
         self.refresh()

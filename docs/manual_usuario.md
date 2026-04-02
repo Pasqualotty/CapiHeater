@@ -80,6 +80,8 @@ Os alvos sao os perfis do Twitter que o bot vai visitar para curtir e seguir.
 - **Excluir** — remove alvos selecionados (aceita selecao multipla com Ctrl+Clique)
 - **Alternar Ativo** — ativa/desativa alvos selecionados sem excluir
 - **Abrir Perfil** — abre o perfil no navegador (duplo clique tambem funciona)
+- **Exportar** — salva todos os alvos em arquivo JSON (com prioridade, categorias, status)
+- **Importar** — carrega alvos de um arquivo JSON. Duplicados sao ignorados, categorias inexistentes sao criadas automaticamente
 - **Ctrl+A** — seleciona todos os alvos
 - **Clique direito** — menu de contexto com todas as opcoes
 
@@ -101,20 +103,20 @@ O cronograma define quantas acoes o bot faz por dia e como ele se comporta.
 
 1. Selecione o cronograma no dropdown
 2. De um **duplo clique** no dia que quer editar
-3. Configure os campos:
+3. Configure os campos (organizados em abas):
 
-**Secao Acoes:**
+**Aba Acoes:**
 - **Likes** — quantas curtidas por dia
 - **Likes coment.** — quantas curtidas em comentarios de posts alvo por dia
 - **Follows** — quantos perfis seguir por dia
 - **Retweets** — quantos retweets por dia
 - **Unfollows** — quantos perfis deixar de seguir por dia
 
-**Secao Navegar pelo Feed (segundos):**
+**Aba Feed (segundos):**
 - **Antes das acoes (Min/Max)** — tempo em segundos que o bot navega pelo feed ANTES de comecar as acoes. Exemplo: Min 120, Max 300 = navega entre 2 e 5 minutos
 - **Entre as acoes (Min/Max)** — tempo em segundos que o bot navega pelo feed ENTRE cada bloco de acoes (entre likes e follows, entre follows e retweets, etc.)
 
-**Secao Comportamento:**
+**Aba Comportamento:**
 - **Abrir postagens** — quantos posts o bot vai clicar para abrir e "ler" durante a navegacao
 - **Ver comentarios (%)** — chance de rolar ate os comentarios quando abrir um post (0-100%)
 - **Curtir no feed** — se marcado, curte posts no feed inicial. Se desmarcado, curte diretamente nos perfis alvo
@@ -167,17 +169,24 @@ Para adicionar uma conta do Twitter ao programa, voce precisa dos **cookies** da
 Depois de configurar alvos, cronograma e contas, e hora de iniciar.
 
 1. Va na aba **Dashboard**
-2. Voce vera suas contas listadas com status "Parado"
+2. Voce vera suas contas listadas com status "A aquecer"
 3. Selecione uma conta e clique em **Iniciar Selecionada**, ou clique em **Iniciar Todos**
 4. O status muda para **Rodando** (verde)
 5. O bot vai abrir o navegador e comecar as acoes
 
 **Status possiveis:**
-- **Parado** (cinza) — conta nao esta rodando
+- **A aquecer** (cinza) — conta aguardando inicio
 - **Rodando** (verde) — bot esta executando acoes
 - **Pausado** (amarelo) — bot esta pausado temporariamente
 - **Erro** (vermelho) — algo deu errado (verifique os logs)
 - **Concluido** (azul) — acoes do dia foram completadas
+
+**Filtros de status:**
+- **Todas** — mostra todas as contas
+- **A aquecer** — so contas aguardando inicio
+- **Em Aquecimento** — contas em processo
+- **Erro** — contas com problema
+- **Concluido** — contas que terminaram
 
 **Botoes de controle:**
 - **Iniciar Todos** — inicia todas as contas de uma vez
@@ -199,11 +208,11 @@ A aba Logs mostra tudo que o bot fez.
 - **Acao** — tipo de acao (like, like_comment, follow, retweet, unfollow)
 - **Alvo** — perfil alvo da acao
 - **Status** — se deu certo (success), falhou (failed) ou foi pulado (skipped)
-- **Erro** — mensagem de erro (se houver)
+- **Erro** — contagem progressiva (ex: "Like 3/11", "Follow 2/5") ou mensagem de erro
 
 **Filtros:**
 - **Conta** — filtrar por conta especifica
-- **Acao** — filtrar por tipo de acao (like, follow, etc.)
+- **Acao** — filtrar por tipo de acao (like, follow, retweet, unfollow, like_comment, login, browse, sistema)
 - **Status** — filtrar por resultado (success, failed, etc.)
 - **Atualizar automaticamente** — atualiza os logs a cada 5 segundos
 - **Limpar Logs** — apaga todos os logs (com confirmacao)
