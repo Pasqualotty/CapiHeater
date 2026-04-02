@@ -16,28 +16,22 @@ class TargetManager:
     # Create
     # ------------------------------------------------------------------
 
-    def add_target(self, username: str, url: str, priority: int = 1) -> int:
-        """Insert a new target and return its id.
-
-        Parameters
-        ----------
-        username : str
-            Target Twitter/X handle.
-        url : str
-            Profile or tweet URL.
-        priority : int
-            Higher means interacted with first (default 1).
-
-        Returns
-        -------
-        int
-            The newly created target row id.
-        """
+    def add_target(self, username: str, url: str, priority: int = 1,
+                   action_like: int = 1, action_follow: int = 1,
+                   action_retweet: int = 1, action_comment_like: int = 1,
+                   rt_latest_post: int = 0,
+                   like_latest_post: int = 0) -> int:
+        """Insert a new target and return its id."""
         query = """
-            INSERT INTO targets (username, url, priority, active)
-            VALUES (?, ?, ?, 1)
+            INSERT INTO targets (username, url, priority, active,
+                                 action_like, action_follow, action_retweet,
+                                 action_comment_like, rt_latest_post, like_latest_post)
+            VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?, ?)
         """
-        return self.db.execute(query, (username, url, priority))
+        return self.db.execute(query, (username, url, priority,
+                                       action_like, action_follow,
+                                       action_retweet, action_comment_like,
+                                       rt_latest_post, like_latest_post))
 
     # ------------------------------------------------------------------
     # Read

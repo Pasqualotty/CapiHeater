@@ -543,6 +543,8 @@ class TwitterWorker(BaseWorker):
                 break
             if done >= count:
                 break
+            if not target.get("action_follow", 1):
+                continue
 
             try:
                 target_user = target.get("username", "").lstrip("@")
@@ -570,9 +572,9 @@ class TwitterWorker(BaseWorker):
                                        target_url=f"https://x.com/{target_user}",
                                        error_message=f"Follow {done}/{count}")
                     self._record_action(target_user, "follow", getattr(self, "_current_day", 1))
-                    # Add to followed targets for likes/RTs on profiles
+                    # Add to followed targets for likes/RTs on profiles (full target data)
                     if not any(t.get("username") == target_user for t in self.followed_targets):
-                        self.followed_targets.append({"username": target_user})
+                        self.followed_targets.append(target)
                     logger.info(f"[{self.account['username']}] Followed @{target_user} ({done}/{count})")
                     time.sleep(random.uniform(1.5, 3.0))
                 elif follow_result == "already_following":
@@ -586,9 +588,9 @@ class TwitterWorker(BaseWorker):
                     # Remove from unfollowed list so it won't be tried again this session
                     self.targets = [t for t in self.targets
                                     if t.get("username", "").lstrip("@") != target_user]
-                    # Add to followed targets for likes/RTs on profiles
+                    # Add to followed targets for likes/RTs on profiles (full target data)
                     if not any(t.get("username") == target_user for t in self.followed_targets):
-                        self.followed_targets.append({"username": target_user})
+                        self.followed_targets.append(target)
                 else:
                     self._log_activity("follow", "skipped", target_username=target_user,
                                        error_message="Botao Follow nao encontrado")
@@ -687,6 +689,8 @@ class TwitterWorker(BaseWorker):
         for target in self._cycle_followed_targets(count):
             if not self.should_continue():
                 break
+            if not target.get("action_retweet", 1):
+                continue
             try:
                 target_user = target.get("username", "").lstrip("@")
                 self.driver.get(f"https://x.com/{target_user}")
@@ -714,7 +718,10 @@ class TwitterWorker(BaseWorker):
                             "css selector", '[data-testid="retweet"]'
                         )
                         if rt_buttons:
-                            btn = random.choice(rt_buttons[:3]) if len(rt_buttons) > 1 else rt_buttons[0]
+                            if target.get("rt_latest_post"):
+                                btn = rt_buttons[0]  # First = latest post on profile
+                            else:
+                                btn = random.choice(rt_buttons[:3]) if len(rt_buttons) > 1 else rt_buttons[0]
                             self.driver.execute_script(
                                 "arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});",
                                 btn,
@@ -933,6 +940,8 @@ class TwitterWorker(BaseWorker):
         for target in self._cycle_followed_targets(count):
             if not self.should_continue():
                 break
+            if not target.get("action_like", 1):
+                continue
             try:
                 target_user = target.get("username", "").lstrip("@")
                 self.driver.get(f"https://x.com/{target_user}")
@@ -963,9 +972,12 @@ class TwitterWorker(BaseWorker):
                             self._scroll_naturally(1)
                             continue
 
-                        # Pick a random tweet from visible ones (prefer top 3-5)
-                        visible_tweets = tweets[:min(5, len(tweets))]
-                        chosen_tweet = random.choice(visible_tweets)
+                        # Pick tweet: latest if configured, otherwise random from top 5
+                        if target.get("like_latest_post"):
+                            chosen_tweet = tweets[0]  # First = latest post on profile
+                        else:
+                            visible_tweets = tweets[:min(5, len(tweets))]
+                            chosen_tweet = random.choice(visible_tweets)
 
                         # Smooth-scroll it to center
                         smooth_scroll_to_element(self.driver, chosen_tweet)
@@ -1116,6 +1128,9 @@ class TwitterWorker(BaseWorker):
                 break
 
             target_user = target.get("username", "").lstrip("@")
+
+            if not target.get("action_comment_like", 1):
+                continue
 
             # Skip targets that already failed (no comments) to avoid infinite retries
             if target_user in failed_targets:
@@ -1418,7 +1433,13 @@ class TwitterWorker(BaseWorker):
             already_followed = self._get_all_followed_targets()
 
             # Build list of followed targets for likes/RTs on profiles
-            self.followed_targets = [{"username": u} for u in already_followed] if already_followed else []
+            # Include full target data (action flags, rt_latest_post) from self.targets
+            all_targets_by_user = {t.get("username", "").lstrip("@"): t for t in self.targets}
+            self.followed_targets = []
+            if already_followed:
+                for u in already_followed:
+                    full = all_targets_by_user.get(u)
+                    self.followed_targets.append(full if full else {"username": u})
             if self.followed_targets:
                 self._log_activity("sistema", "success",
                                    error_message=f"{len(self.followed_targets)} alvos ja seguidos disponiveis para likes/RTs em perfis")

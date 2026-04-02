@@ -10,6 +10,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QCheckBox,
     QComboBox,
     QDialog,
     QFileDialog,
@@ -134,9 +135,9 @@ class TargetsTab(BaseTab):
 
         # ---------- Table ----------
         self._table = QTableWidget()
-        self._table.setColumnCount(5)
+        self._table.setColumnCount(6)
         self._table.setHorizontalHeaderLabels(
-            ["Usuario", "URL", "Prioridade", "Categoria", "Ativo"]
+            ["Usuario", "URL", "Prioridade", "Categoria", "Acoes", "Ativo"]
         )
         self._table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self._table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
@@ -150,10 +151,12 @@ class TargetsTab(BaseTab):
         header.setSectionResizeMode(2, QHeaderView.ResizeMode.Interactive)
         header.setSectionResizeMode(3, QHeaderView.ResizeMode.Interactive)
         header.setSectionResizeMode(4, QHeaderView.ResizeMode.Interactive)
+        header.setSectionResizeMode(5, QHeaderView.ResizeMode.Interactive)
         self._table.setColumnWidth(0, 140)
         self._table.setColumnWidth(2, 80)
         self._table.setColumnWidth(3, 120)
-        self._table.setColumnWidth(4, 60)
+        self._table.setColumnWidth(4, 100)
+        self._table.setColumnWidth(5, 60)
 
         # Double-click opens profile
         self._table.doubleClicked.connect(self._open_profile)
@@ -188,6 +191,17 @@ class TargetsTab(BaseTab):
             active_label = "Sim" if t.get("active", 1) else "Nao"
             cat_names = cat_mgr.get_target_category_names(t["id"])
             cat_label = ", ".join(cat_names) if cat_names else "\u2014"
+            # Build compact actions label
+            parts = []
+            if t.get("action_like", 1):
+                parts.append("L" if not t.get("like_latest_post", 0) else "L*")
+            if t.get("action_follow", 1):
+                parts.append("F")
+            if t.get("action_retweet", 1):
+                parts.append("RT" if not t.get("rt_latest_post", 0) else "RT*")
+            if t.get("action_comment_like", 1):
+                parts.append("C")
+            actions_label = " ".join(parts) if parts else "\u2014"
             self._all_targets.append({
                 "id": t["id"],
                 "url": t.get("url", ""),
@@ -197,6 +211,7 @@ class TargetsTab(BaseTab):
                     t.get("url", ""),
                     priority_label,
                     cat_label,
+                    actions_label,
                     active_label,
                 ),
             })
@@ -241,7 +256,7 @@ class TargetsTab(BaseTab):
 
             for col, text in enumerate(item["values"]):
                 cell = QTableWidgetItem(text)
-                if col in (2, 3, 4):
+                if col in (2, 3, 4, 5):
                     cell.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
                 cell.setData(Qt.ItemDataRole.UserRole, item["id"])
                 self._table.setItem(row, col, cell)
@@ -467,7 +482,7 @@ class TargetsTab(BaseTab):
     def _open_target_form(self, title, target):
         dlg = QDialog(self)
         dlg.setWindowTitle(title)
-        dlg.resize(440, 400)
+        dlg.resize(480, 520)
         dlg.setModal(True)
 
         layout = QVBoxLayout(dlg)
@@ -498,7 +513,31 @@ class TargetsTab(BaseTab):
         combo_prio.addItems(["Baixa", "Media", "Alta"])
         layout.addWidget(combo_prio)
 
+        # --- Action flags ---
+        layout.addSpacing(6)
+        layout.addWidget(QLabel("Acoes permitidas:"))
+        actions_row = QHBoxLayout()
+        chk_like = QCheckBox("Like")
+        chk_follow = QCheckBox("Follow")
+        chk_retweet = QCheckBox("Retweet")
+        chk_comment_like = QCheckBox("Like coment.")
+        for chk in (chk_like, chk_follow, chk_retweet, chk_comment_like):
+            chk.setChecked(True)
+            actions_row.addWidget(chk)
+        actions_row.addStretch()
+        layout.addLayout(actions_row)
+
+        # Latest post options
+        chk_like_latest = QCheckBox("Like na ultima postagem")
+        chk_like_latest.setChecked(False)
+        layout.addWidget(chk_like_latest)
+
+        chk_rt_latest = QCheckBox("RT na ultima postagem")
+        chk_rt_latest.setChecked(False)
+        layout.addWidget(chk_rt_latest)
+
         # Categories (multi-select)
+        layout.addSpacing(6)
         layout.addWidget(QLabel("Categorias (Ctrl+clique para multiplas):"))
         cat_names = self.app.category_manager.get_category_names()
         cat_list = list(cat_names.values())
@@ -517,6 +556,12 @@ class TargetsTab(BaseTab):
             ent_url.setText(target.get("url", ""))
             prio_label = PRIORITY_LABELS.get(target.get("priority", 1), "Baixa")
             combo_prio.setCurrentText(prio_label)
+            chk_like.setChecked(bool(target.get("action_like", 1)))
+            chk_follow.setChecked(bool(target.get("action_follow", 1)))
+            chk_retweet.setChecked(bool(target.get("action_retweet", 1)))
+            chk_comment_like.setChecked(bool(target.get("action_comment_like", 1)))
+            chk_rt_latest.setChecked(bool(target.get("rt_latest_post", 0)))
+            chk_like_latest.setChecked(bool(target.get("like_latest_post", 0)))
             # Pre-select existing categories
             existing_cats = set(self.app.category_manager.get_target_categories(target["id"]))
             for i, cid in enumerate(cat_ids):
@@ -540,6 +585,14 @@ class TargetsTab(BaseTab):
                 url = f"https://x.com/{username}"
 
             priority = PRIORITY_VALUES.get(combo_prio.currentText(), 1)
+            action_flags = {
+                "action_like": int(chk_like.isChecked()),
+                "action_follow": int(chk_follow.isChecked()),
+                "action_retweet": int(chk_retweet.isChecked()),
+                "action_comment_like": int(chk_comment_like.isChecked()),
+                "rt_latest_post": int(chk_rt_latest.isChecked()),
+                "like_latest_post": int(chk_like_latest.isChecked()),
+            }
             selected_cat_ids = [
                 cat_ids[cat_listbox.row(item)]
                 for item in cat_listbox.selectedItems()
@@ -548,6 +601,7 @@ class TargetsTab(BaseTab):
             if target:
                 self.app.target_manager.update_target(
                     target["id"], username=username, url=url, priority=priority,
+                    **action_flags,
                 )
                 self.app.category_manager.set_target_categories(
                     target["id"], selected_cat_ids
@@ -555,7 +609,7 @@ class TargetsTab(BaseTab):
                 self.app.set_status(f"Alvo @{username} atualizado")
             else:
                 new_id = self.app.target_manager.add_target(
-                    username=username, url=url, priority=priority
+                    username=username, url=url, priority=priority, **action_flags,
                 )
                 if selected_cat_ids:
                     self.app.category_manager.set_target_categories(
@@ -734,6 +788,12 @@ class TargetsTab(BaseTab):
                 "url": t.get("url", ""),
                 "priority": t.get("priority", 1),
                 "active": bool(t.get("active", 1)),
+                "action_like": bool(t.get("action_like", 1)),
+                "action_follow": bool(t.get("action_follow", 1)),
+                "action_retweet": bool(t.get("action_retweet", 1)),
+                "action_comment_like": bool(t.get("action_comment_like", 1)),
+                "rt_latest_post": bool(t.get("rt_latest_post", 0)),
+                "like_latest_post": bool(t.get("like_latest_post", 0)),
                 "categories": cat_names,
             })
 
@@ -811,7 +871,13 @@ class TargetsTab(BaseTab):
                 priority = 1
 
             tid = self.app.target_manager.add_target(
-                username=username, url=url, priority=priority
+                username=username, url=url, priority=priority,
+                action_like=int(item.get("action_like", True)),
+                action_follow=int(item.get("action_follow", True)),
+                action_retweet=int(item.get("action_retweet", True)),
+                action_comment_like=int(item.get("action_comment_like", True)),
+                rt_latest_post=int(item.get("rt_latest_post", False)),
+                like_latest_post=int(item.get("like_latest_post", False)),
             )
 
             # Set active status

@@ -71,6 +71,12 @@ class Database:
                     url TEXT NOT NULL,
                     priority INTEGER DEFAULT 1,
                     active INTEGER DEFAULT 1,
+                    action_like INTEGER DEFAULT 1,
+                    action_follow INTEGER DEFAULT 1,
+                    action_retweet INTEGER DEFAULT 1,
+                    action_comment_like INTEGER DEFAULT 1,
+                    rt_latest_post INTEGER DEFAULT 0,
+                    like_latest_post INTEGER DEFAULT 0,
                     created_at TEXT DEFAULT (datetime('now', 'localtime'))
                 )
             """)
@@ -143,6 +149,17 @@ class Database:
                 cursor.execute("ALTER TABLE accounts ADD COLUMN scroll_config TEXT DEFAULT NULL")
             if "last_heating_at" not in cols:
                 cursor.execute("ALTER TABLE accounts ADD COLUMN last_heating_at TEXT DEFAULT NULL")
+
+            # Add per-target action flags if missing (v1.8+)
+            target_cols = {r[1] for r in cursor.execute("PRAGMA table_info(targets)").fetchall()}
+            for col_name, col_default in [
+                ("action_like", "1"), ("action_follow", "1"),
+                ("action_retweet", "1"), ("action_comment_like", "1"),
+                ("rt_latest_post", "0"),
+                ("like_latest_post", "0"),
+            ]:
+                if col_name not in target_cols:
+                    cursor.execute(f"ALTER TABLE targets ADD COLUMN {col_name} INTEGER DEFAULT {col_default}")
 
             # Reset accounts stuck as 'running' from a previous crashed session
             cursor.execute(
