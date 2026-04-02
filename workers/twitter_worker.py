@@ -190,12 +190,27 @@ class TwitterWorker(BaseWorker):
                 # Ensure cookie has required fields
                 if "name" not in cookie or "value" not in cookie:
                     continue
-                # Fix domain if needed
-                c = dict(cookie)
-                if "sameSite" in c and c["sameSite"] not in ("Strict", "Lax", "None"):
-                    c.pop("sameSite")
-                if "expiry" in c and isinstance(c["expiry"], float):
-                    c["expiry"] = int(c["expiry"])
+                # Build a clean cookie dict with only Selenium-recognized fields
+                c = {
+                    "name": cookie["name"],
+                    "value": cookie["value"],
+                }
+                if "domain" in cookie:
+                    c["domain"] = cookie["domain"]
+                if "path" in cookie:
+                    c["path"] = cookie["path"]
+                if cookie.get("secure"):
+                    c["secure"] = True
+                if cookie.get("httpOnly"):
+                    c["httpOnly"] = True
+                # Handle sameSite (Selenium only accepts Strict, Lax, None)
+                sam = cookie.get("sameSite")
+                if sam in ("Strict", "Lax", "None"):
+                    c["sameSite"] = sam
+                # Handle expiry: Cookie Editor exports "expirationDate", Selenium expects "expiry"
+                expiry = cookie.get("expiry") or cookie.get("expirationDate")
+                if expiry and not cookie.get("session"):
+                    c["expiry"] = int(expiry)
                 self.driver.add_cookie(c)
             except Exception as exc:
                 logger.debug(f"Cookie skip: {cookie.get('name', '?')}: {exc}")
