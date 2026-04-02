@@ -722,13 +722,18 @@ class TwitterWorker(BaseWorker):
                 rt_success = False
 
                 if target.get("rt_latest_post"):
-                    # Open the latest original post and RT from inside
+                    # Open the latest original post (not already RTed) and RT from inside
                     try:
                         tweets = self.driver.find_elements("css selector", '[data-testid="tweet"]')
                         original_tweets = [tw for tw in tweets
                                            if not tw.find_elements("css selector", '[data-testid="socialContext"]')]
-                        if original_tweets:
-                            chosen = original_tweets[0]
+                        # Find first post not already retweeted
+                        chosen = None
+                        for candidate in original_tweets:
+                            if not candidate.find_elements("css selector", '[data-testid="unretweet"]'):
+                                chosen = candidate
+                                break
+                        if chosen:
                             smooth_scroll_to_element(self.driver, chosen)
                             time.sleep(random.uniform(1.0, 3.0))
 
@@ -888,23 +893,36 @@ class TwitterWorker(BaseWorker):
                     try:
                         tweets = self.driver.find_elements("css selector", '[data-testid="tweet"]')
 
-                        # Filter out retweets (they have a "socialContext" span with "Retweeted")
+                        # Filter out retweets (they have a "socialContext" span)
                         original_tweets = []
                         for tw in tweets:
                             try:
-                                social = tw.find_elements("css selector", '[data-testid="socialContext"]')
-                                if social:
-                                    continue  # This is a retweet, skip
+                                if tw.find_elements("css selector", '[data-testid="socialContext"]'):
+                                    continue
                                 original_tweets.append(tw)
                             except Exception:
                                 original_tweets.append(tw)
 
-                        if original_tweets:
-                            want_latest = target.get("like_latest_post") or target.get("rt_latest_post")
-                            if want_latest:
-                                chosen = original_tweets[0]
-                            else:
-                                chosen = random.choice(original_tweets[:min(5, len(original_tweets))])
+                        # Pre-filter: check which posts already have like/RT from the profile view
+                        want_latest = target.get("like_latest_post") or target.get("rt_latest_post")
+                        if want_latest:
+                            candidates = original_tweets  # try from newest to oldest
+                        else:
+                            candidates = original_tweets[:min(5, len(original_tweets))]
+                            random.shuffle(candidates)
+
+                        acted = False
+                        for chosen in candidates:
+                            if not self.should_continue():
+                                break
+
+                            # Check from profile: is this post already liked / already RTed?
+                            already_liked = bool(chosen.find_elements("css selector", '[data-testid="unlike"]'))
+                            already_rted = bool(chosen.find_elements("css selector", '[data-testid="unretweet"]'))
+
+                            # Skip if both actions already done on this post
+                            if (not want_like or already_liked) and (not want_rt or already_rted):
+                                continue
 
                             smooth_scroll_to_element(self.driver, chosen)
                             time.sleep(random.uniform(1.0, 3.0))
@@ -923,63 +941,69 @@ class TwitterWorker(BaseWorker):
                                 except Exception:
                                     pass
 
-                            if clickable:
-                                from selenium.webdriver.common.action_chains import ActionChains
-                                ActionChains(self.driver).move_to_element(clickable).pause(
-                                    random.uniform(0.3, 0.8)
-                                ).click().perform()
+                            if not clickable:
+                                continue
 
-                                try:
-                                    from selenium.webdriver.support.ui import WebDriverWait
-                                    WebDriverWait(self.driver, 10).until(
-                                        lambda d: "/status/" in d.current_url
-                                    )
-                                except Exception:
-                                    pass
+                            from selenium.webdriver.common.action_chains import ActionChains
+                            ActionChains(self.driver).move_to_element(clickable).pause(
+                                random.uniform(0.3, 0.8)
+                            ).click().perform()
 
-                                time.sleep(random.uniform(3.0, 8.0))
+                            try:
+                                from selenium.webdriver.support.ui import WebDriverWait
+                                WebDriverWait(self.driver, 10).until(
+                                    lambda d: "/status/" in d.current_url
+                                )
+                            except Exception:
+                                continue
 
-                                # --- Like inside the post ---
-                                if want_like:
-                                    like_buttons = self.driver.find_elements("css selector", '[data-testid="like"]')
-                                    if like_buttons:
-                                        like_btn = like_buttons[0]
-                                        smooth_scroll_to_element(self.driver, like_btn)
-                                        time.sleep(random.uniform(0.5, 1.5))
-                                        like_btn.click()
-                                        likes_done += 1
-                                        self._send("action_complete", action="like", target=target_user, progress=likes_done)
-                                        self._log_activity("like", "success", target_username=target_user,
+                            time.sleep(random.uniform(3.0, 8.0))
+
+                            # --- Like inside the post ---
+                            if want_like and not already_liked:
+                                like_buttons = self.driver.find_elements("css selector", '[data-testid="like"]')
+                                if like_buttons:
+                                    smooth_scroll_to_element(self.driver, like_buttons[0])
+                                    time.sleep(random.uniform(0.5, 1.5))
+                                    like_buttons[0].click()
+                                    likes_done += 1
+                                    self._send("action_complete", action="like", target=target_user, progress=likes_done)
+                                    self._log_activity("like", "success", target_username=target_user,
+                                                       target_url=f"https://x.com/{target_user}",
+                                                       error_message=f"Like {likes_done}/{like_count}")
+                                    self._record_action(target_user, "like", getattr(self, "_current_day", 1))
+                                    logger.info(f"[{self.account['username']}] Like on @{target_user} {likes_done}/{like_count}")
+                                    time.sleep(random.uniform(1.5, 3.0))
+
+                            # --- RT inside the same post ---
+                            if want_rt and not already_rted:
+                                rt_buttons = self.driver.find_elements("css selector", '[data-testid="retweet"]')
+                                if rt_buttons:
+                                    smooth_scroll_to_element(self.driver, rt_buttons[0])
+                                    time.sleep(random.uniform(1.0, 2.5))
+                                    rt_buttons[0].click()
+                                    time.sleep(random.uniform(0.8, 1.5))
+
+                                    confirm = self.driver.find_elements("css selector", '[data-testid="retweetConfirm"]')
+                                    if confirm:
+                                        confirm[0].click()
+                                        rts_done += 1
+                                        self._send("action_complete", action="retweet", target=target_user, progress=rts_done)
+                                        self._log_activity("retweet", "success", target_username=target_user,
                                                            target_url=f"https://x.com/{target_user}",
-                                                           error_message=f"Like {likes_done}/{like_count}")
-                                        self._record_action(target_user, "like", getattr(self, "_current_day", 1))
-                                        logger.info(f"[{self.account['username']}] Like on @{target_user} {likes_done}/{like_count}")
-                                        time.sleep(random.uniform(1.5, 3.0))
+                                                           error_message=f"Retweet {rts_done}/{rt_count}")
+                                        self._record_action(target_user, "retweet", getattr(self, "_current_day", 1))
+                                        logger.info(f"[{self.account['username']}] RT on @{target_user} {rts_done}/{rt_count}")
 
-                                # --- RT inside the same post ---
-                                if want_rt:
-                                    rt_buttons = self.driver.find_elements("css selector", '[data-testid="retweet"]')
-                                    if rt_buttons:
-                                        rt_btn = rt_buttons[0]
-                                        smooth_scroll_to_element(self.driver, rt_btn)
-                                        time.sleep(random.uniform(1.0, 2.5))
-                                        rt_btn.click()
-                                        time.sleep(random.uniform(0.8, 1.5))
+                            # Go back to profile
+                            self.driver.back()
+                            time.sleep(random.uniform(2.0, 4.0))
+                            acted = True
+                            break  # Done with this target
 
-                                        confirm = self.driver.find_elements("css selector", '[data-testid="retweetConfirm"]')
-                                        if confirm:
-                                            confirm[0].click()
-                                            rts_done += 1
-                                            self._send("action_complete", action="retweet", target=target_user, progress=rts_done)
-                                            self._log_activity("retweet", "success", target_username=target_user,
-                                                               target_url=f"https://x.com/{target_user}",
-                                                               error_message=f"Retweet {rts_done}/{rt_count}")
-                                            self._record_action(target_user, "retweet", getattr(self, "_current_day", 1))
-                                            logger.info(f"[{self.account['username']}] RT on @{target_user} {rts_done}/{rt_count}")
-
-                                # Go back to profile
-                                self.driver.back()
-                                time.sleep(random.uniform(2.0, 4.0))
+                        if not acted:
+                            self._log_activity("sistema", "skipped", target_username=target_user,
+                                               error_message=f"Todos os posts de @{target_user} ja curtidos/retweetados")
 
                     except Exception as exc:
                         self._log_activity("sistema", "failed", target_username=target_user, error_message=str(exc))
@@ -1212,12 +1236,20 @@ class TwitterWorker(BaseWorker):
                             self._scroll_naturally(1)
                             continue
 
-                        # Pick tweet: latest if configured, otherwise random from top 5
+                        # Pick tweet: skip already-liked posts
                         if target.get("like_latest_post"):
-                            chosen_tweet = original_tweets[0]
+                            candidates = original_tweets
                         else:
-                            visible_tweets = original_tweets[:min(5, len(original_tweets))]
-                            chosen_tweet = random.choice(visible_tweets)
+                            candidates = original_tweets[:min(5, len(original_tweets))]
+
+                        chosen_tweet = None
+                        for candidate in candidates:
+                            if not candidate.find_elements("css selector", '[data-testid="unlike"]'):
+                                chosen_tweet = candidate
+                                break
+                        if not chosen_tweet:
+                            self._scroll_naturally(1)
+                            continue
 
                         # Smooth-scroll it to center
                         smooth_scroll_to_element(self.driver, chosen_tweet)
