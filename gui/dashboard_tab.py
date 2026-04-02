@@ -138,7 +138,7 @@ class DashboardTab(BaseTab):
             "border-radius: 4px; padding: 4px 14px; font-size: 9pt;"
         )
 
-        for key, label in [("all", "Todas"), ("heating", "Em Aquecimento"), ("completed", "Concluido")]:
+        for key, label in [("all", "Todas"), ("to_heat", "A aquecer"), ("heating", "Em Aquecimento"), ("error", "Erro"), ("completed", "Concluido")]:
             btn = QPushButton(label)
             btn.setCheckable(True)
             btn.setChecked(key == "all")
@@ -223,8 +223,12 @@ class DashboardTab(BaseTab):
         self._card_labels["errors"].setText(str(errors))
 
         # Apply heating filter
-        if self._current_filter == "heating":
+        if self._current_filter == "to_heat":
+            filtered = [a for a in accounts if a.get("status") == "idle"]
+        elif self._current_filter == "heating":
             filtered = [a for a in accounts if a.get("status") != "completed"]
+        elif self._current_filter == "error":
+            filtered = [a for a in accounts if a.get("status") == "error"]
         elif self._current_filter == "completed":
             filtered = [a for a in accounts if a.get("status") == "completed"]
         else:
@@ -419,7 +423,7 @@ class DashboardTab(BaseTab):
             "running": "Rodando",
             "paused": "Pausado",
             "error": "Erro",
-            "idle": "Parado",
+            "idle": "A aquecer",
             "completed": "Concluido",
             "stopping": "Parando",
         }
