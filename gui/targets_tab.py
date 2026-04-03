@@ -316,10 +316,18 @@ class TargetsTab(BaseTab):
             if row not in {i.row() for i in self._table.selectionModel().selectedRows()}:
                 self._table.selectRow(row)
 
+        selected_ids = self._get_selected_ids()
+        selected_count = len(selected_ids)
+
         menu = QMenu(self)
         menu.addAction("Abrir Perfil", self._open_profile)
         menu.addSeparator()
         menu.addAction("Editar", self._edit_dialog)
+        if selected_count > 1:
+            menu.addAction(
+                f"Editar Categorias ({selected_count} alvos)",
+                lambda: self._open_bulk_categories_dialog(selected_ids),
+            )
         menu.addAction("Alternar Ativo", self._toggle_active)
         menu.addSeparator()
         menu.addAction("Excluir Selecionados", self._delete_targets)
@@ -483,14 +491,97 @@ class TargetsTab(BaseTab):
         self._open_target_form(title="Adicionar Alvo", target=None)
 
     def _edit_dialog(self):
-        tid = self._get_selected_id()
-        if tid is None:
+        ids = self._get_selected_ids()
+        if not ids:
             QMessageBox.warning(self, "Aviso", "Selecione um alvo para editar.")
             return
-        target = self.app.target_manager.get_target(tid)
+        if len(ids) > 1:
+            self._open_bulk_categories_dialog(ids)
+            return
+        target = self.app.target_manager.get_target(ids[0])
         if target is None:
             return
         self._open_target_form(title="Editar Alvo", target=target)
+
+    def _open_bulk_categories_dialog(self, target_ids: list[int]) -> None:
+        """Open a dialog to set categories on multiple selected targets at once."""
+        count = len(target_ids)
+        dlg = QDialog(self)
+        dlg.setWindowTitle(f"Editar Categorias — {count} alvos selecionados")
+        dlg.resize(400, 320)
+        dlg.setModal(True)
+
+        layout = QVBoxLayout(dlg)
+        layout.setContentsMargins(16, 14, 16, 12)
+        layout.setSpacing(8)
+
+        title_label = QLabel(f"Aplicar categorias a {count} alvos selecionados")
+        title_label.setStyleSheet("font-size: 12pt; font-weight: bold; color: #ffffff;")
+        layout.addWidget(title_label)
+
+        hint = QLabel("As categorias escolhidas aqui substituirao as categorias atuais\nde todos os alvos selecionados.")
+        hint.setStyleSheet("color: #888aaa; font-size: 8pt;")
+        layout.addWidget(hint)
+
+        layout.addSpacing(4)
+        layout.addWidget(QLabel("Categorias (Ctrl+clique para multiplas):"))
+
+        cat_names_map = self.app.category_manager.get_category_names()
+        cat_list = list(cat_names_map.values())
+        cat_ids = list(cat_names_map.keys())
+        cat_listbox: QListWidget | None = None
+
+        if not cat_list:
+            layout.addWidget(QLabel("Nenhuma categoria cadastrada.\nUse o botao 'Categorias' para criar."))
+        else:
+            cat_listbox = QListWidget()
+            cat_listbox.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+            layout.addWidget(cat_listbox, 1)
+            for name in cat_list:
+                cat_listbox.addItem(name)
+
+        btn_row = QHBoxLayout()
+        btn_row.addStretch()
+
+        btn_save = QPushButton("Aplicar a Todos")
+        btn_save.setObjectName("accent")
+        btn_row.addWidget(btn_save)
+
+        btn_cancel = QPushButton("Cancelar")
+        btn_cancel.clicked.connect(dlg.reject)
+        btn_row.addWidget(btn_cancel)
+
+        btn_row.addStretch()
+        layout.addLayout(btn_row)
+
+        def on_save():
+            if cat_listbox is None:
+                dlg.accept()
+                return
+            selected_cat_ids = [
+                cat_ids[cat_listbox.row(item)]
+                for item in cat_listbox.selectedItems()
+            ]
+            failed: list[int] = []
+            for tid in target_ids:
+                try:
+                    self.app.category_manager.set_target_categories(tid, selected_cat_ids)
+                except Exception:
+                    failed.append(tid)
+            dlg.accept()
+            self.refresh()
+            if failed:
+                QMessageBox.warning(
+                    dlg,
+                    "Aviso",
+                    f"{len(failed)} alvo(s) falharam ao atualizar (podem ter sido removidos).",
+                )
+            succeeded = count - len(failed)
+            cat_label = ", ".join(cat_names_map[c] for c in selected_cat_ids) if selected_cat_ids else "nenhuma"
+            self.app.set_status(f"{succeeded} alvo(s) atualizados — categorias: {cat_label}")
+
+        btn_save.clicked.connect(on_save)
+        dlg.exec()
 
     def _open_target_form(self, title, target):
         dlg = QDialog(self)

@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
     QButtonGroup,
     QCheckBox,
     QComboBox,
+    QCompleter,
     QDialog,
     QHBoxLayout,
     QHeaderView,
@@ -31,6 +32,37 @@ from gui.base import BaseTab, SortableItem
 from gui.theme import STATUS_COLORS
 
 logger = logging.getLogger(__name__)
+
+
+def _setup_searchable_combo(combo: QComboBox, items: list[str]) -> None:
+    """Torna um QComboBox pesquisavel por substring, case-insensitive.
+
+    O usuario pode digitar para filtrar as opcoes, mas nao pode confirmar
+    um valor que nao exista na lista — ao perder foco o combo restaura a
+    selecao valida mais proxima.
+    """
+    combo.setEditable(True)
+    completer = QCompleter(items)
+    completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+    completer.setFilterMode(Qt.MatchFlag.MatchContains)
+    combo.setCompleter(completer)
+
+    def _on_editing_finished() -> None:
+        text = combo.lineEdit().text()
+        # busca exata primeiro, depois case-insensitive
+        idx = combo.findText(text, Qt.MatchFlag.MatchFixedString)
+        if idx < 0:
+            for i in range(combo.count()):
+                if combo.itemText(i).lower() == text.lower():
+                    idx = i
+                    break
+        if idx >= 0:
+            combo.setCurrentIndex(idx)
+        else:
+            # texto nao corresponde a nenhum item — restaura selecao atual
+            combo.lineEdit().setText(combo.itemText(combo.currentIndex()))
+
+    combo.lineEdit().editingFinished.connect(_on_editing_finished)
 
 
 # Pace option labels  <-> DB values
@@ -327,11 +359,15 @@ class SfsTab(BaseTab):
         # ---------- Conta ----------
         layout.addWidget(QLabel("Conta:"))
         combo_account = QComboBox()
-        accounts = self.app.account_manager.get_all_accounts()
+        accounts = sorted(
+            self.app.account_manager.get_all_accounts(),
+            key=lambda a: a["username"].lower(),
+        )
         account_ids: list[int] = []
         for acc in accounts:
             combo_account.addItem(f"@{acc['username']}")
             account_ids.append(acc["id"])
+        _setup_searchable_combo(combo_account, [f"@{a['username']}" for a in accounts])
         layout.addWidget(combo_account)
 
         # ---------- Alvos ----------
@@ -352,15 +388,20 @@ class SfsTab(BaseTab):
         chk_cl = QCheckBox("Like coment.")
         chk_like_latest = QCheckBox("Like ultima post.")
         chk_rt_latest = QCheckBox("RT ultima post.")
-        for chk in (chk_follow, chk_like, chk_rt, chk_cl):
-            chk.setChecked(True)
+        for chk, default in (
+            (chk_follow, False),
+            (chk_like, True),
+            (chk_rt, True),
+            (chk_cl, False),
+        ):
+            chk.setChecked(default)
             actions_row.addWidget(chk)
         actions_row.addStretch()
         layout.addLayout(actions_row)
 
         latest_row = QHBoxLayout()
         for chk in (chk_like_latest, chk_rt_latest):
-            chk.setChecked(False)
+            chk.setChecked(True)
             latest_row.addWidget(chk)
         latest_row.addStretch()
         layout.addLayout(latest_row)
