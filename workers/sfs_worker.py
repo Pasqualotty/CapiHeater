@@ -124,7 +124,31 @@ class SfsWorker(BaseWorker):
             factory = DriverFactory
 
         proxy = self.account.get("proxy")
-        self.driver = factory.create_driver(proxy=proxy)
+
+        if proxy:
+            if not any(proxy.startswith(s) for s in ("http://", "https://", "socks4://", "socks5://")):
+                logger.error(
+                    f"[{self.account['username']}] SFS — Proxy com formato invalido: {proxy}"
+                )
+                self._log_activity("sistema", "failed", error_message="Proxy com formato invalido")
+                raise RuntimeError(
+                    f"SFS — Proxy da conta @{self.account['username']} tem formato invalido. "
+                    f"Use: protocolo://usuario:senha@host:porta"
+                )
+            logger.info(f"[{self.account['username']}] SFS — Proxy configurado: {proxy[:30]}...")
+
+        try:
+            self.driver = factory.create_driver(proxy=proxy)
+        except Exception as exc:
+            logger.error(
+                f"[{self.account['username']}] SFS — Falha ao criar browser: {exc}\n"
+                f"{traceback.format_exc()}"
+            )
+            self._log_activity("sistema", "failed", error_message=f"Falha ao abrir navegador: {exc}")
+            raise RuntimeError(
+                f"SFS — Nao foi possivel abrir o navegador para @{self.account['username']}. "
+                f"Erro: {exc}"
+            )
 
         if proxy:
             username = self.account["username"]
@@ -152,7 +176,23 @@ class SfsWorker(BaseWorker):
 
         cookies = self.account.get("cookies_json", "[]")
         if isinstance(cookies, str):
-            cookies = json.loads(cookies)
+            try:
+                cookies = json.loads(cookies)
+            except (json.JSONDecodeError, TypeError) as exc:
+                logger.error(f"[{self.account['username']}] SFS — Cookies JSON invalido: {exc}")
+                self._log_activity("login", "failed", error_message=f"Cookies JSON invalido: {exc}")
+                raise RuntimeError(
+                    f"SFS — Cookies da conta @{self.account['username']} estao com formato invalido (JSON corrompido). "
+                    "Reimporte os cookies."
+                )
+
+        if not cookies:
+            logger.error(f"[{self.account['username']}] SFS — Conta sem cookies cadastrados")
+            self._log_activity("login", "failed", error_message="Conta sem cookies cadastrados")
+            raise RuntimeError(
+                f"SFS — Conta @{self.account['username']} nao possui cookies cadastrados. "
+                "Importe os cookies primeiro."
+            )
 
         for cookie in cookies:
             try:
@@ -177,16 +217,32 @@ class SfsWorker(BaseWorker):
             except Exception as exc:
                 logger.debug(f"Cookie skip: {cookie.get('name', '?')}: {exc}")
 
+        loaded_count = len(cookies)
+        logger.info(
+            f"[{self.account['username']}] SFS — {loaded_count} cookies carregados, verificando login..."
+        )
+
         self.driver.get("https://x.com/home")
         time.sleep(4)
 
         if not self._is_logged_in():
+            page_title = ""
+            try:
+                page_title = self.driver.title
+            except Exception:
+                pass
+            logger.error(
+                f"[{self.account['username']}] SFS — Login falhou. "
+                f"Cookies carregados: {loaded_count}, Page title: '{page_title}', "
+                f"URL: {self.driver.current_url}"
+            )
             self._log_activity(
                 "login", "failed",
-                error_message="Cookies invalidos ou expirados",
+                error_message=f"Cookies invalidos ou expirados ({loaded_count} cookies carregados)",
             )
             raise RuntimeError(
                 f"SFS — Falha ao logar com cookies da conta @{self.account['username']}. "
+                f"{loaded_count} cookies foram carregados mas o login nao foi reconhecido. "
                 "Verifique se os cookies estao validos."
             )
         self._log_activity("login", "success")
@@ -305,8 +361,9 @@ class SfsWorker(BaseWorker):
         if self.driver:
             try:
                 self.driver.quit()
-            except Exception:
-                pass
+                logger.debug(f"[{self.account.get('username', '?')}] SFS — Browser fechado com sucesso")
+            except Exception as exc:
+                logger.warning(f"[{self.account.get('username', '?')}] SFS — Erro ao fechar browser: {exc}")
             finally:
                 self.driver = None
 

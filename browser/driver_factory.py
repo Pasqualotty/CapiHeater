@@ -8,6 +8,10 @@ import threading
 
 import undetected_chromedriver as uc
 
+from utils.logger import get_logger
+
+_logger = get_logger(__name__)
+
 
 class DriverFactory:
     """Factory for creating configured undetected Chrome WebDriver instances."""
@@ -30,11 +34,27 @@ class DriverFactory:
     @staticmethod
     def _detect_chrome_version() -> int | None:
         """Detect the major version of the installed Chrome browser."""
-        import subprocess
         import os
+        import subprocess
 
+        # --- Attempt 1: Windows Registry (most reliable, no subprocess needed) ---
+        try:
+            import winreg
+            for hive in (winreg.HKEY_CURRENT_USER, winreg.HKEY_LOCAL_MACHINE):
+                try:
+                    key = winreg.OpenKey(hive, r"SOFTWARE\Google\Chrome\BLBeacon")
+                    version_str, _ = winreg.QueryValueEx(key, "version")
+                    winreg.CloseKey(key)
+                    major = int(version_str.split(".")[0])
+                    _logger.info(f"Chrome versao detectada via Registry: {major}")
+                    return major
+                except (OSError, ValueError, IndexError):
+                    continue
+        except ImportError:
+            pass  # Not on Windows
+
+        # --- Find Chrome executable for fallback methods ---
         chrome_path = None
-        # Common Chrome locations on Windows
         for path in [
             os.path.join(os.environ.get("PROGRAMFILES", ""), "Google", "Chrome", "Application", "chrome.exe"),
             os.path.join(os.environ.get("PROGRAMFILES(X86)", ""), "Google", "Chrome", "Application", "chrome.exe"),
@@ -48,31 +68,38 @@ class DriverFactory:
             try:
                 chrome_path = uc.find_chrome_executable()
             except Exception:
+                _logger.warning("Chrome executavel nao encontrado em nenhum caminho conhecido")
                 return None
 
-        # Use PowerShell to get the file version (most reliable on Windows)
+        _logger.debug(f"Chrome encontrado em: {chrome_path}")
+
+        # --- Attempt 2: PowerShell file version ---
         try:
             out = subprocess.check_output(
                 ["powershell", "-Command",
                  f"(Get-Item '{chrome_path}').VersionInfo.FileVersion"],
                 text=True, timeout=10,
             )
-            return int(out.strip().split(".")[0])
-        except Exception:
-            pass
+            major = int(out.strip().split(".")[0])
+            _logger.info(f"Chrome versao detectada via PowerShell: {major}")
+            return major
+        except Exception as exc:
+            _logger.debug(f"PowerShell version detection falhou: {exc}")
 
-        # Fallback: run chrome --version
+        # --- Attempt 3: chrome --version ---
         try:
             out = subprocess.check_output(
                 [chrome_path, "--version"], text=True, timeout=10,
             )
-            # "Google Chrome 146.0.7680.165" → 146
             for part in out.strip().split():
                 if "." in part:
-                    return int(part.split(".")[0])
-        except Exception:
-            pass
+                    major = int(part.split(".")[0])
+                    _logger.info(f"Chrome versao detectada via --version: {major}")
+                    return major
+        except Exception as exc:
+            _logger.debug(f"Chrome --version detection falhou: {exc}")
 
+        _logger.warning("Nenhum metodo de deteccao de versao do Chrome funcionou")
         return None
 
     @classmethod
@@ -133,8 +160,17 @@ class DriverFactory:
         # Detect installed Chrome major version to avoid driver/browser mismatch
         version_main = cls._detect_chrome_version()
 
+        if version_main:
+            _logger.info(f"Chrome versao detectada: {version_main}")
+        else:
+            _logger.warning("Nao foi possivel detectar a versao do Chrome — usando deteccao automatica do uc")
+
         # Lock ensures only one uc.Chrome() runs at a time (patch race fix)
         with cls._creation_lock:
-            driver = uc.Chrome(options=options, version_main=version_main)
+            try:
+                driver = uc.Chrome(options=options, version_main=version_main)
+            except Exception as exc:
+                _logger.error(f"Falha ao criar Chrome driver (version_main={version_main}): {exc}")
+                raise
 
         return driver

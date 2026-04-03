@@ -230,6 +230,35 @@ class CapiHeaterApp(QMainWindow):
                     f"Conta @{username}:\n\n{warning_msg}",
                 )
 
+        elif event == "sfs_error":
+            username = msg.get("username", "")
+            session_id = msg.get("session_id", "")
+            error_detail = msg.get("error", "Erro desconhecido")
+            self.set_status(f"SFS @{username}: erro — {error_detail}")
+            QMessageBox.critical(
+                self,
+                "Erro na Sessao SFS",
+                f"Falha ao executar sessao SFS da conta @{username}.\n\n"
+                f"{error_detail}\n\n"
+                "Verifique os cookies, o proxy e se o Chrome esta instalado corretamente.",
+            )
+            # Refresh SFS tab so status column mostra 'error'
+            sfs_tab = self._tabs.get("SFS")
+            if sfs_tab and hasattr(sfs_tab, "refresh"):
+                sfs_tab.refresh()
+
+        elif event == "sfs_started":
+            username = msg.get("username", "")
+            self.set_status(f"SFS @{username}: iniciado")
+
+        elif event == "sfs_completed":
+            username = msg.get("username", "")
+            total = msg.get("total", 0)
+            self.set_status(f"SFS @{username}: concluido ({total} alvo(s))")
+            sfs_tab = self._tabs.get("SFS")
+            if sfs_tab and hasattr(sfs_tab, "refresh"):
+                sfs_tab.refresh()
+
         # Refresh dashboard on any message
         dashboard = self._tabs.get("Dashboard")
         if dashboard and hasattr(dashboard, "refresh"):

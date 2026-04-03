@@ -38,15 +38,18 @@ a = Analysis(
         "gui.dashboard_tab", "gui.accounts_tab",
         "gui.targets_tab", "gui.schedule_tab", "gui.logs_tab",
         "gui.settings_tab", "gui.login_window", "gui.admin_tab", "gui.docs_tab",
+        "gui.sfs_tab",
         "gui.widgets", "gui.widgets.account_card", "gui.widgets.status_indicator",
         # Core
         "core", "core.engine", "core.scheduler",
         "core.account_manager", "core.target_manager",
+        "core.sfs_manager",
         # Workers
         "workers", "workers.base_worker", "workers.twitter_worker",
         "workers.actions", "workers.actions.selectors",
         "workers.actions.like", "workers.actions.follow",
         "workers.actions.unfollow", "workers.actions.retweet",
+        "workers.sfs_worker",
         # Browser
         "browser", "browser.driver_factory",
         "browser.cookie_manager", "browser.proxy_config",
@@ -62,6 +65,8 @@ a = Analysis(
         "selenium.webdriver.support.ui", "selenium.webdriver.support.expected_conditions",
         "supabase", "cryptography", "cryptography.fernet",
         "mmh3", "pyiceberg", "pyparsing", "storage3",
+        # Required by undetected_chromedriver.patcher
+        "multiprocessing", "multiprocessing.Lock",
     ],
     hookspath=[],
     hooksconfig={},
