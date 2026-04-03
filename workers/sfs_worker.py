@@ -19,9 +19,9 @@ logger = get_logger(__name__)
 
 # Pace -> (min_seconds, max_seconds) between targets
 PACE_DELAYS = {
-    "slow":   (120, 300),
-    "normal": (60,  180),
-    "fast":   (30,   90),
+    "slow":   (20, 35),
+    "normal": (10, 20),
+    "fast":   (5,  10),
 }
 
 
