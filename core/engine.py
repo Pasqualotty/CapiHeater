@@ -10,6 +10,7 @@ from core.target_manager import TargetManager
 from core.category_manager import CategoryManager
 from core.scheduler import Scheduler
 from workers.twitter_worker import TwitterWorker
+from workers.sfs_worker import SfsWorker
 from database.db import Database
 from utils.config import DB_PATH
 from utils.logger import get_logger
@@ -46,6 +47,8 @@ class Engine:
 
         # account_id -> TwitterWorker
         self._workers: dict[int, TwitterWorker] = {}
+        # session_id -> SfsWorker
+        self._sfs_workers: dict[int, "SfsWorker"] = {}
         self._lock = threading.Lock()
 
     # ------------------------------------------------------------------
@@ -240,6 +243,159 @@ class Engine:
         with self._lock:
             ids = list(self._workers.keys())
         return {aid: self.get_worker_status(aid) for aid in ids}
+
+    # ------------------------------------------------------------------
+    # SFS session controls
+    # ------------------------------------------------------------------
+
+    def start_sfs_session(self, session_id: int, sfs_manager) -> bool:
+        """Start a worker for the given SFS session.
+
+        Parameters
+        ----------
+        session_id : int
+            ID of the SFS session to start.
+        sfs_manager : SfsManager
+            The shared SFS manager instance.
+
+        Returns
+        -------
+        bool
+            False if the session is not found, already running, or the account
+            already has an active heating/SFS worker.
+        """
+        with self._lock:
+            # Purge dead SFS workers
+            dead = [sid for sid, w in self._sfs_workers.items() if not w.is_alive()]
+            for sid in dead:
+                del self._sfs_workers[sid]
+
+            # Refuse if session already has a live worker
+            existing = self._sfs_workers.get(session_id)
+            if existing and existing.is_alive():
+                logger.warning(
+                    f"SFS session {session_id} already has a live worker."
+                )
+                return False
+
+            session = sfs_manager.get_session(session_id)
+            if session is None:
+                logger.error(f"SFS session {session_id} not found.")
+                return False
+
+            account_id = session["account_id"]
+
+            # Refuse if account already runs a heating worker
+            heating_worker = self._workers.get(account_id)
+            if heating_worker and heating_worker.is_alive():
+                logger.warning(
+                    f"Account {account_id} already has an active heating worker. "
+                    f"Cannot start SFS session {session_id}."
+                )
+                return False
+
+            # Refuse if account already runs another SFS session
+            for sid, w in self._sfs_workers.items():
+                if w.is_alive() and w.account["id"] == account_id:
+                    logger.warning(
+                        f"Account {account_id} already has an active SFS worker "
+                        f"(session {sid}). Cannot start session {session_id}."
+                    )
+                    return False
+
+            account = self.account_manager.get_account(account_id)
+            if account is None:
+                logger.error(
+                    f"Account {account_id} not found for SFS session {session_id}."
+                )
+                return False
+
+            worker = SfsWorker(
+                account=account,
+                session_data=session,
+                sfs_manager=sfs_manager,
+                db=self.db,
+                message_queue=self.queue,
+            )
+            self._sfs_workers[session_id] = worker
+            worker.start()
+
+            sfs_manager.update_status(session_id, "running")
+            logger.info(
+                f"Started SFS worker for session {session_id} "
+                f"(account {account['username']})"
+            )
+            return True
+
+    def stop_sfs_session(self, session_id: int, sfs_manager) -> bool:
+        """Signal an SFS worker to stop.
+
+        Returns False if no live worker exists for this session.
+        """
+        with self._lock:
+            worker = self._sfs_workers.get(session_id)
+
+        if worker and worker.is_alive():
+            worker.stop()
+            sfs_manager.update_status(session_id, "idle")
+            logger.info(f"Stop signal sent to SFS session {session_id}")
+            return True
+
+        # Worker already dead — reset status anyway
+        sfs_manager.update_status(session_id, "idle")
+        logger.info(
+            f"SFS session {session_id} worker already dead, status reset to idle"
+        )
+        return False
+
+    def pause_sfs_session(self, session_id: int, sfs_manager) -> bool:
+        """Pause a running SFS worker.
+
+        Returns False if no live worker exists.
+        """
+        with self._lock:
+            worker = self._sfs_workers.get(session_id)
+
+        if worker and worker.is_alive():
+            worker.pause()
+            sfs_manager.update_status(session_id, "paused")
+            logger.info(f"Paused SFS session {session_id}")
+            return True
+
+        logger.warning(f"No active SFS worker for session {session_id}")
+        return False
+
+    def resume_sfs_session(self, session_id: int, sfs_manager) -> bool:
+        """Resume a paused SFS worker.
+
+        Returns False if no live worker exists.
+        """
+        with self._lock:
+            worker = self._sfs_workers.get(session_id)
+
+        if worker and worker.is_alive():
+            worker.resume()
+            sfs_manager.update_status(session_id, "running")
+            logger.info(f"Resumed SFS session {session_id}")
+            return True
+
+        logger.warning(f"No active SFS worker for session {session_id}")
+        return False
+
+    def get_sfs_worker_status(self, session_id: int) -> str:
+        """Return a human-readable status for an SFS worker."""
+        with self._lock:
+            worker = self._sfs_workers.get(session_id)
+
+        if worker is None:
+            return "not_started"
+        if not worker.is_alive():
+            return "finished"
+        if worker.is_paused():
+            return "paused"
+        if worker.is_stopped():
+            return "stopping"
+        return "running"
 
     # ------------------------------------------------------------------
     # Internal (no-lock variants for use inside the lock)

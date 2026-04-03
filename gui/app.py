@@ -26,6 +26,7 @@ from core.engine import Engine
 from core.account_manager import AccountManager
 from core.target_manager import TargetManager
 from core.category_manager import CategoryManager
+from core.sfs_manager import SfsManager
 from utils.config import DB_PATH, APP_NAME, get_user_db_path
 from utils.logger import get_logger
 
@@ -82,6 +83,7 @@ class CapiHeaterApp(QMainWindow):
         self.account_manager = AccountManager(self.db)
         self.target_manager = TargetManager(self.db)
         self.category_manager = CategoryManager(self.db)
+        self.sfs_manager = SfsManager(self.db)
         self.engine = Engine(
             db=self.db,
             message_queue=self.message_queue,
@@ -144,6 +146,7 @@ class CapiHeaterApp(QMainWindow):
         from gui.dashboard_tab import DashboardTab
         from gui.accounts_tab import AccountsTab
         from gui.targets_tab import TargetsTab
+        from gui.sfs_tab import SfsTab
         from gui.schedule_tab import ScheduleTab
         from gui.logs_tab import LogsTab
         from gui.settings_tab import SettingsTab
@@ -153,6 +156,7 @@ class CapiHeaterApp(QMainWindow):
             ("Dashboard", DashboardTab),
             ("Contas", AccountsTab),
             ("Alvos", TargetsTab),
+            ("SFS", SfsTab),
             ("Cronogramas", ScheduleTab),
             ("Logs", LogsTab),
             ("Configurações", SettingsTab),

@@ -142,6 +142,37 @@ class Database:
                 )
             """)
 
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS sfs_sessions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL,
+                    account_id INTEGER NOT NULL,
+                    action_like INTEGER DEFAULT 1,
+                    action_follow INTEGER DEFAULT 1,
+                    action_retweet INTEGER DEFAULT 1,
+                    action_comment_like INTEGER DEFAULT 0,
+                    like_latest_post INTEGER DEFAULT 0,
+                    rt_latest_post INTEGER DEFAULT 0,
+                    pace TEXT DEFAULT 'normal',
+                    status TEXT DEFAULT 'idle',
+                    created_at TEXT DEFAULT (datetime('now', 'localtime')),
+                    updated_at TEXT DEFAULT (datetime('now', 'localtime')),
+                    FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE
+                )
+            """)
+
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS sfs_session_targets (
+                    session_id INTEGER NOT NULL,
+                    target_id INTEGER NOT NULL,
+                    completed INTEGER DEFAULT 0,
+                    completed_at TEXT DEFAULT NULL,
+                    PRIMARY KEY (session_id, target_id),
+                    FOREIGN KEY (session_id) REFERENCES sfs_sessions(id) ON DELETE CASCADE,
+                    FOREIGN KEY (target_id) REFERENCES targets(id) ON DELETE CASCADE
+                )
+            """)
+
             # --- Migrations for existing databases ---
             # Add scroll_config column if missing (v0.7.1+)
             cols = {r[1] for r in cursor.execute("PRAGMA table_info(accounts)").fetchall()}
@@ -165,6 +196,7 @@ class Database:
             cursor.execute(
                 "UPDATE accounts SET status = 'idle' WHERE status IN ('running', 'stopping')"
             )
+            cursor.execute("UPDATE sfs_sessions SET status = 'idle' WHERE status = 'running'")
 
             # Insert default schedules if none exist
             cursor.execute("SELECT COUNT(*) FROM schedules")
