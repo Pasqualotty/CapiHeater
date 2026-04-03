@@ -76,7 +76,7 @@ Os alvos sao os perfis do Twitter que o bot vai visitar para curtir e seguir.
 
 **Funcoes da aba Alvos:**
 - **Adicionar Alvo** — cadastra um novo perfil alvo
-- **Editar** — altera os dados de um alvo selecionado
+- **Editar** — altera os dados de um alvo selecionado. Ao selecionar multiplos alvos, permite editar categorias em massa para todos de uma vez (v1.9.4)
 - **Excluir** — remove alvos selecionados (aceita selecao multipla com Ctrl+Clique)
 - **Alternar Ativo** — ativa/desativa alvos selecionados sem excluir
 - **Abrir Perfil** — abre o perfil no navegador (duplo clique tambem funciona)
@@ -84,6 +84,18 @@ Os alvos sao os perfis do Twitter que o bot vai visitar para curtir e seguir.
 - **Importar** — carrega alvos de um arquivo JSON. Duplicados sao ignorados, categorias inexistentes sao criadas automaticamente
 - **Ctrl+A** — seleciona todos os alvos
 - **Clique direito** — menu de contexto com todas as opcoes
+
+**Formatos aceitos ao adicionar alvos (v1.9.2):**
+
+O programa normaliza automaticamente qualquer formato de link ou usuario:
+- `https://x.com/usuario`
+- `x.com/usuario` (sem https://)
+- `https://twitter.com/usuario`
+- `twitter.com/usuario`
+- `@usuario`
+- `usuario`
+
+Links com letras maiusculas tambem funcionam normalmente.
 
 ---
 
@@ -211,7 +223,7 @@ A aba Logs mostra tudo que o bot fez.
 - **Erro** — contagem progressiva (ex: "Like 3/11", "Follow 2/5") ou mensagem de erro
 
 **Filtros:**
-- **Conta** — filtrar por conta especifica
+- **Conta** — dropdown pesquisavel: digite para filtrar por nome. Contas em ordem alfabetica (v1.9.4)
 - **Acao** — filtrar por tipo de acao (like, follow, retweet, unfollow, like_comment, login, browse, sistema)
 - **Status** — filtrar por resultado (success, failed, etc.)
 - **Atualizar automaticamente** — atualiza os logs a cada 5 segundos
@@ -341,3 +353,35 @@ O bot detecta e trata automaticamente:
 8. Iniciar aquecimento (aba Dashboard)
 9. Acompanhar resultados (aba Logs)
 ```
+
+---
+
+## Historico de Novidades
+
+### v1.9.4 — Dropdowns pesquisaveis + Edicao em massa
+
+- Dropdowns de contas no SFS e Logs agora sao pesquisaveis (digite para filtrar)
+- Contas listadas em ordem alfabetica nos dropdowns
+- Nova sessao SFS ja vem com Curtir, RT, Like ultimo post e RT ultimo post ativados por padrao
+- Edicao em massa de categorias: selecione multiplos alvos, clique Editar e aplique categorias para todos de uma vez
+
+### v1.9.3 — Tabelas ordenaveis
+
+- Clique no cabecalho de qualquer coluna para ordenar (crescente/decrescente)
+- Ordenacao inteligente reconhece numeros, datas e texto
+- Funciona em todas as tabelas: Contas, Alvos, SFS, Logs, Dashboard, Cronogramas, Admin
+- O cursor muda para mao nos cabecalhos clicaveis
+
+### v1.9.2 — Links funcionam em todos os formatos
+
+- Adicionar alvos aceita links sem https:// (ex: `x.com/usuario`)
+- Links com letras maiusculas sao normalizados automaticamente
+- Links do `twitter.com` sao aceitos e convertidos para `x.com`
+- `@usuario` em qualquer formato e reconhecido corretamente
+
+### v1.9.1 — SFS mais rapido
+
+- Delays entre perfis no modo SFS drasticamente reduzidos:
+  - Slow: 20-35 segundos
+  - Normal: 10-20 segundos
+  - Fast: 5-10 segundos
