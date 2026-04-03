@@ -609,11 +609,15 @@ def _extract_username(text: str) -> str | None:
     if not text:
         return None
 
-    match = re.match(r'https?://(?:www\.)?(?:x|twitter)\.com/(@?[\w]+)', text)
+    # URL com ou sem protocolo (case-insensitive)
+    match = re.match(
+        r'(?:https?://)?(?:www\.)?(?:x|twitter)\.com/(@?[\w]+)', text, re.IGNORECASE
+    )
     if match:
         return match.group(1).lstrip("@")
 
-    match = re.match(r'^@([\w]+)$', text)
+    # @usuario em qualquer posicao do texto
+    match = re.search(r'@([\w]+)', text)
     if match:
         return match.group(1)
 
