@@ -28,7 +28,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
-from gui.base import BaseTab
+from gui.base import BaseTab, SortableItem
 
 
 # Priority int <-> label mapping
@@ -47,8 +47,6 @@ class TargetsTab(BaseTab):
 
     def __init__(self, app, parent=None):
         super().__init__(app, parent)
-        self._row_map = {}   # row index -> target id
-        self._url_map = {}   # row index -> url
         self._all_targets = []
         self._build_ui()
         self.refresh()
@@ -165,6 +163,8 @@ class TargetsTab(BaseTab):
         self._table.customContextMenuRequested.connect(self._show_context_menu)
         # Selection changed
         self._table.itemSelectionChanged.connect(self._on_selection_changed)
+        self._table.setSortingEnabled(True)
+        header.setCursor(Qt.CursorShape.PointingHandCursor)
 
         layout.addWidget(self._table)
 
@@ -234,14 +234,14 @@ class TargetsTab(BaseTab):
 
     def _filter_table(self):
         """Apply search and category filters and repopulate the table."""
+        self._table.setSortingEnabled(False)
         self._table.setRowCount(0)
-        self._row_map.clear()
-        self._url_map.clear()
 
         query = self._search_edit.text().strip().lower()
         cat_filter = self._cat_filter_combo.currentText()
         shown = 0
 
+        # col indices: 0=Usuario, 1=URL, 2=Prioridade, 3=Categoria, 4=Acoes, 5=Ativo
         for item in self._all_targets:
             username = item["values"][0].lower()
             if query and query not in username:
@@ -255,15 +255,20 @@ class TargetsTab(BaseTab):
             self._table.insertRow(row)
 
             for col, text in enumerate(item["values"]):
-                cell = QTableWidgetItem(text)
+                if col == 2:
+                    # Prioridade: sort by numeric value stored in PRIORITY_VALUES
+                    prio_int = PRIORITY_VALUES.get(text, 1)
+                    cell = SortableItem(text, sort_key=prio_int)
+                else:
+                    cell = SortableItem(text)
                 if col in (2, 3, 4, 5):
                     cell.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
                 cell.setData(Qt.ItemDataRole.UserRole, item["id"])
                 self._table.setItem(row, col, cell)
 
-            self._row_map[row] = item["id"]
-            self._url_map[row] = item["url"]
             shown += 1
+
+        self._table.setSortingEnabled(True)
 
         total = len(self._all_targets)
         if query or cat_filter != "Todas":
@@ -275,8 +280,14 @@ class TargetsTab(BaseTab):
 
     def _get_selected_ids(self):
         """Return list of selected target IDs."""
-        rows = {idx.row() for idx in self._table.selectionModel().selectedRows()}
-        return [self._row_map[r] for r in rows if r in self._row_map]
+        ids = []
+        for idx in self._table.selectionModel().selectedRows():
+            item = self._table.item(idx.row(), 0)
+            if item is not None:
+                tid = item.data(Qt.ItemDataRole.UserRole)
+                if tid is not None:
+                    ids.append(tid)
+        return ids
 
     def _get_selected_id(self):
         ids = self._get_selected_ids()
@@ -722,9 +733,12 @@ class TargetsTab(BaseTab):
             QMessageBox.warning(self, "Aviso", "Selecione um ou mais alvos.")
             return
         for row in rows:
-            url = self._url_map.get(row, "")
-            if url:
-                webbrowser.open(url)
+            # Column 1 holds the URL text directly.
+            item = self._table.item(row, 1)
+            if item is not None:
+                url = item.text()
+                if url:
+                    webbrowser.open(url)
 
     def _delete_targets(self):
         """Delete all selected targets."""

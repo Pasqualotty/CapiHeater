@@ -27,7 +27,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
-from gui.base import BaseTab
+from gui.base import BaseTab, SortableItem
 from gui.theme import STATUS_COLORS
 
 logger = logging.getLogger(__name__)
@@ -64,7 +64,6 @@ class SfsTab(BaseTab):
 
     def __init__(self, app, parent=None):
         super().__init__(app, parent)
-        self._row_map: dict[int, int] = {}   # table-row -> session id
         self._build_ui()
         self.refresh()
 
@@ -150,6 +149,8 @@ class SfsTab(BaseTab):
         self._table.customContextMenuRequested.connect(self._show_context_menu)
         self._table.itemSelectionChanged.connect(self._on_selection_changed)
         self._table.doubleClicked.connect(self._edit_dialog)
+        self._table.setSortingEnabled(True)
+        header.setCursor(Qt.CursorShape.PointingHandCursor)
 
         layout.addWidget(self._table)
 
@@ -172,8 +173,8 @@ class SfsTab(BaseTab):
         """Reload sessions from database and repopulate the table."""
         sessions = self.app.sfs_manager.get_all_sessions()
 
+        self._table.setSortingEnabled(False)
         self._table.setRowCount(0)
-        self._row_map.clear()
 
         for session in sessions:
             row = self._table.rowCount()
@@ -185,6 +186,7 @@ class SfsTab(BaseTab):
             account_username = session.get("account_username", "?")
             status = session.get("status", "idle")
 
+            # col: 0=Nome, 1=Alvos, 2=Acoes, 3=Ritmo, 4=Conta, 5=Status
             values = (
                 session.get("name", ""),
                 str(total),
@@ -195,7 +197,10 @@ class SfsTab(BaseTab):
             )
 
             for col, text in enumerate(values):
-                cell = QTableWidgetItem(text)
+                if col == 1:
+                    cell = SortableItem(text, sort_key=total)
+                else:
+                    cell = SortableItem(text)
                 cell.setData(Qt.ItemDataRole.UserRole, session["id"])
                 if col in (1, 2, 3, 4, 5):
                     cell.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -205,7 +210,7 @@ class SfsTab(BaseTab):
                         cell.setForeground(QColor(color))
                 self._table.setItem(row, col, cell)
 
-            self._row_map[row] = session["id"]
+        self._table.setSortingEnabled(True)
 
         total_count = len(sessions)
         self._sel_info.setText(
@@ -214,8 +219,14 @@ class SfsTab(BaseTab):
         self._update_button_states()
 
     def _get_selected_ids(self) -> list[int]:
-        rows = {idx.row() for idx in self._table.selectionModel().selectedRows()}
-        return [self._row_map[r] for r in rows if r in self._row_map]
+        ids = []
+        for idx in self._table.selectionModel().selectedRows():
+            item = self._table.item(idx.row(), 0)
+            if item is not None:
+                sid = item.data(Qt.ItemDataRole.UserRole)
+                if sid is not None:
+                    ids.append(sid)
+        return ids
 
     def _get_selected_id(self) -> int | None:
         ids = self._get_selected_ids()

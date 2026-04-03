@@ -20,7 +20,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
-from gui.base import BaseTab
+from gui.base import BaseTab, SortableItem
 from gui.theme import (
     ACCENT,
     BG_ACCENT,
@@ -53,9 +53,9 @@ class DashboardTab(BaseTab):
 
     def __init__(self, app, parent=None):
         super().__init__(app, parent)
-        self._account_rows: dict[int, int] = {}  # account_id -> table row
         self._accounts_cache: list[dict] = []
         self._filtered_cache: list[dict] = []
+        self._filtered_by_id: dict[int, dict] = {}  # account_id -> account dict
         self._build_ui()
         self.refresh()
 
@@ -166,6 +166,7 @@ class DashboardTab(BaseTab):
         self._table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._table.customContextMenuRequested.connect(self._show_context_menu)
         self._table.itemSelectionChanged.connect(self._on_selection_changed)
+        self._table.setSortingEnabled(True)
 
         header = self._table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
@@ -174,6 +175,7 @@ class DashboardTab(BaseTab):
         header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
         header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
         header.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
+        header.setCursor(Qt.CursorShape.PointingHandCursor)
 
         layout.addWidget(self._table)
 
@@ -234,11 +236,13 @@ class DashboardTab(BaseTab):
         else:
             filtered = accounts
 
-        self._filtered_cache = filtered  # for _edit_day lookups
+        self._filtered_cache = filtered  # for _edit_day lookups (keyed by account_id)
+        # Build a fast lookup: account_id -> account dict (used by _edit_day)
+        self._filtered_by_id: dict[int, dict] = {acc["id"]: acc for acc in filtered}
 
         # Update table
+        self._table.setSortingEnabled(False)
         self._table.setRowCount(0)
-        self._account_rows.clear()
 
         self._table.setRowCount(len(filtered))
         for i, acc in enumerate(filtered):
@@ -253,30 +257,34 @@ class DashboardTab(BaseTab):
                 try:
                     dt = datetime.strptime(last_heat, "%Y-%m-%d %H:%M:%S")
                     last_heat_str = dt.strftime("%d/%m %H:%M")
+                    # ISO string sorts chronologically as plain string
+                    last_heat_sort = last_heat
                 except Exception:
                     last_heat_str = last_heat
+                    last_heat_sort = last_heat
             else:
                 last_heat_str = "\u2014"
+                last_heat_sort = ""
 
             dot = "\u25cf" if status in ("running", "paused", "error", "completed") else "\u25cb"
-            values = [dot, f"@{acc.get('username', '???')}", self._status_label(status), f"Dia {day}", last_heat_str]
-            alignments = [
-                Qt.AlignmentFlag.AlignCenter,
-                Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
-                Qt.AlignmentFlag.AlignCenter,
-                Qt.AlignmentFlag.AlignCenter,
-                Qt.AlignmentFlag.AlignCenter,
+            # col: 0=indicator, 1=Conta, 2=Status, 3=Dia, 4=Ultimo Aquecimento
+            entries = [
+                (dot, None, Qt.AlignmentFlag.AlignCenter),
+                (f"@{acc.get('username', '???')}", None,
+                 Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter),
+                (self._status_label(status), None, Qt.AlignmentFlag.AlignCenter),
+                (f"Dia {day}", day, Qt.AlignmentFlag.AlignCenter),
+                (last_heat_str, last_heat_sort, Qt.AlignmentFlag.AlignCenter),
             ]
 
-            for col, (val, align) in enumerate(zip(values, alignments)):
-                item = QTableWidgetItem(val)
+            for col, (val, sort_key, align) in enumerate(entries):
+                item = SortableItem(val, sort_key=sort_key)
                 item.setForeground(color)
                 item.setTextAlignment(align)
-                if col == 0:
-                    item.setData(Qt.ItemDataRole.UserRole, aid)
+                item.setData(Qt.ItemDataRole.UserRole, aid)
                 self._table.setItem(i, col, item)
 
-            self._account_rows[aid] = i
+        self._table.setSortingEnabled(True)
 
     def on_status_update(self, msg: dict) -> None:
         """Handle a status_update message from the engine queue."""
@@ -374,10 +382,9 @@ class DashboardTab(BaseTab):
             return
 
         aid = ids[0]
-        row_idx = self._account_rows.get(aid)
-        if row_idx is None:
+        account = self._filtered_by_id.get(aid)
+        if account is None:
             return
-        account = self._filtered_cache[row_idx]
         status = account.get("status", "idle")
 
         if status in ("running", "paused"):

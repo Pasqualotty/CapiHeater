@@ -18,6 +18,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from gui.base import SortableItem
+
 
 class AdminTab(QWidget):
     """Admin panel for managing user access.
@@ -84,11 +86,13 @@ class AdminTab(QWidget):
         self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self._table.setAlternatingRowColors(True)
         self._table.verticalHeader().setVisible(False)
+        self._table.setSortingEnabled(True)
 
         header = self._table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         for col in range(1, 6):
             header.setSectionResizeMode(col, QHeaderView.ResizeMode.ResizeToContents)
+        header.setCursor(Qt.CursorShape.PointingHandCursor)
 
         layout.addWidget(self._table)
 
@@ -127,6 +131,7 @@ class AdminTab(QWidget):
         checked = self._filter_group.checkedButton()
         filt = checked.text() if checked else "Todos"
 
+        self._table.setSortingEnabled(False)
         self._table.setRowCount(0)
 
         for u in self._all_users:
@@ -142,19 +147,28 @@ class AdminTab(QWidget):
 
             row = self._table.rowCount()
             self._table.insertRow(row)
+
+            # "Ativado em" is stored as ISO datetime string — sorts correctly as str
+            activated_at = str(u.get("activated_at", "") or "")
+            # col: 0=E-mail, 1=Papel, 2=Status, 3=Ativado em, 4=Liberado por, 5=Motivo
+            email = u.get("email", "")
             values = [
-                u.get("email", ""),
-                u.get("role", "user"),
-                status,
-                u.get("activated_at", ""),
-                u.get("granted_by", ""),
-                u.get("grant_reason", ""),
+                (email, None),
+                (u.get("role", "user"), None),
+                (status, None),
+                (activated_at, activated_at),
+                (str(u.get("granted_by", "") or ""), None),
+                (str(u.get("grant_reason", "") or ""), None),
             ]
-            for col, val in enumerate(values):
-                item = QTableWidgetItem(str(val))
-                if col > 0:
+            for col, (val, sort_key) in enumerate(values):
+                item = SortableItem(val, sort_key=sort_key)
+                if col == 0:
+                    item.setData(Qt.ItemDataRole.UserRole, email)
+                else:
                     item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
                 self._table.setItem(row, col, item)
+
+        self._table.setSortingEnabled(True)
 
     # ------------------------------------------------------------------
     # Actions
@@ -182,13 +196,13 @@ class AdminTab(QWidget):
             QMessageBox.critical(self, "Erro", str(exc))
 
     def _on_revoke(self):
-        row = self._table.currentRow()
-        if row < 0:
+        selected = self._table.selectionModel().selectedRows()
+        if not selected:
             QMessageBox.warning(self, "Selecione", "Selecione um usuario na tabela.")
             return
 
-        email_item = self._table.item(row, 0)
-        email = email_item.text() if email_item else ""
+        email_item = self._table.item(selected[0].row(), 0)
+        email = email_item.data(Qt.ItemDataRole.UserRole) if email_item else ""
 
         reply = QMessageBox.question(
             self,

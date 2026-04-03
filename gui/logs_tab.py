@@ -19,7 +19,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
-from gui.base import BaseTab
+from gui.base import BaseTab, SortableItem
 from gui.theme import COLOR_ERROR, COLOR_SUCCESS, COLOR_WARNING
 
 _STATUS_COLORS = {
@@ -124,6 +124,7 @@ class LogsTab(BaseTab):
         self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self._table.setAlternatingRowColors(True)
         self._table.verticalHeader().setVisible(False)
+        self._table.setSortingEnabled(True)
 
         header = self._table.horizontalHeader()
         header.setStretchLastSection(True)
@@ -132,6 +133,7 @@ class LogsTab(BaseTab):
         header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
         header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
         header.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
+        header.setCursor(Qt.CursorShape.PointingHandCursor)
 
         layout.addWidget(self._table)
 
@@ -175,6 +177,7 @@ class LogsTab(BaseTab):
 
         rows = self.app.db.fetch_all(query, tuple(params))
 
+        self._table.setSortingEnabled(False)
         self._table.setRowCount(len(rows))
         for i, row in enumerate(rows):
             status_val = row.get("status", "")
@@ -185,8 +188,11 @@ class LogsTab(BaseTab):
             try:
                 dt = datetime.strptime(raw_date, "%Y-%m-%d %H:%M:%S")
                 formatted_date = dt.strftime("%d/%m/%Y %H:%M:%S")
+                # Use the ISO string as sort key so chronological order is preserved
+                date_sort_key = raw_date
             except (ValueError, TypeError):
                 formatted_date = raw_date
+                date_sort_key = raw_date
 
             values = [
                 formatted_date,
@@ -197,11 +203,16 @@ class LogsTab(BaseTab):
                 row.get("error_message") or "\u2014",
             ]
             for col, val in enumerate(values):
-                item = QTableWidgetItem(str(val))
+                if col == 0:
+                    item = SortableItem(str(val), sort_key=date_sort_key)
+                else:
+                    item = SortableItem(str(val))
                 item.setForeground(color)
                 if col in (2, 4):
                     item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
                 self._table.setItem(i, col, item)
+
+        self._table.setSortingEnabled(True)
 
     def _update_account_filter(self) -> None:
         """Refresh the account filter dropdown."""

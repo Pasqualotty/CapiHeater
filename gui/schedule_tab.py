@@ -27,7 +27,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from gui.base import BaseTab
+from gui.base import BaseTab, SortableItem
 from gui.theme import ACCENT, BG_DARK, BG_SECONDARY, FG_MUTED, FG_TEXT
 
 
@@ -128,11 +128,13 @@ class ScheduleTab(BaseTab):
         self._table.setAlternatingRowColors(True)
         self._table.verticalHeader().setVisible(False)
         self._table.doubleClicked.connect(lambda _: self._on_edit_day())
+        self._table.setSortingEnabled(True)
 
         header = self._table.horizontalHeader()
         header.setStretchLastSection(True)
         for col in range(9):
             header.setSectionResizeMode(col, QHeaderView.ResizeMode.Stretch)
+        header.setCursor(Qt.CursorShape.PointingHandCursor)
 
         layout.addWidget(self._table, stretch=1)
 
@@ -188,10 +190,12 @@ class ScheduleTab(BaseTab):
 
     def _display_schedule(self, idx: int) -> None:
         """Show the day-by-day breakdown for the selected schedule."""
+        self._table.setSortingEnabled(False)
         self._table.setRowCount(0)
 
         filtered = getattr(self, "_filtered_schedules", self._schedules)
         if idx < 0 or idx >= len(filtered):
+            self._table.setSortingEnabled(True)
             return
         schedule = filtered[idx]
         self._info_label.setText(schedule.get("description", ""))
@@ -208,21 +212,26 @@ class ScheduleTab(BaseTab):
             browse_before_str = f"{bb_min}-{bb_max}" if (bb_min or bb_max) else "0"
             browse_between_str = f"{bw_min}-{bw_max}" if (bw_min or bw_max) else "0"
 
+            day_num = entry.get("day", 0)
+            # col: 0=Dia, 1=Likes, 2=LikesComent, 3=Follows, 4=Retweets,
+            #       5=Unfollows, 6=FeedAntes, 7=FeedEntre, 8=AbrirPosts
             values = [
-                f"Dia {entry.get('day', '?')}",
-                str(entry.get("likes", 0)),
-                str(entry.get("comment_likes", 0)),
-                str(entry.get("follows", 0)),
-                str(entry.get("retweets", 0)),
-                str(entry.get("unfollows", 0)),
-                browse_before_str,
-                browse_between_str,
-                str(entry.get("posts_to_open", 0)),
+                (f"Dia {day_num}", day_num),
+                (str(entry.get("likes", 0)), entry.get("likes", 0)),
+                (str(entry.get("comment_likes", 0)), entry.get("comment_likes", 0)),
+                (str(entry.get("follows", 0)), entry.get("follows", 0)),
+                (str(entry.get("retweets", 0)), entry.get("retweets", 0)),
+                (str(entry.get("unfollows", 0)), entry.get("unfollows", 0)),
+                (browse_before_str, bb_max),
+                (browse_between_str, bw_max),
+                (str(entry.get("posts_to_open", 0)), entry.get("posts_to_open", 0)),
             ]
-            for col, val in enumerate(values):
-                item = QTableWidgetItem(val)
+            for col, (val, sort_key) in enumerate(values):
+                item = SortableItem(val, sort_key=sort_key)
                 item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
                 self._table.setItem(row, col, item)
+
+        self._table.setSortingEnabled(True)
 
     def _parse_days(self, schedule: dict) -> list[dict]:
         raw = schedule.get("schedule_json", "[]")

@@ -29,7 +29,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from gui.base import BaseTab
+from gui.base import BaseTab, SortableItem
 from gui.theme import (
     ACCENT,
     BG_DARK,
@@ -56,8 +56,6 @@ class AccountsTab(BaseTab):
     def __init__(self, app, parent=None):
         super().__init__(app, parent)
         self._all_accounts: list[dict] = []
-        self._row_map: dict[int, int] = {}          # table-row -> account_id
-        self._username_map: dict[int, str] = {}      # table-row -> username
         self._build_ui()
         self.refresh()
 
@@ -135,11 +133,13 @@ class AccountsTab(BaseTab):
         self._table.customContextMenuRequested.connect(self._show_context_menu)
         self._table.doubleClicked.connect(lambda _idx: self._open_profile())
         self._table.itemSelectionChanged.connect(self._on_selection_changed)
+        self._table.setSortingEnabled(True)
 
         header = self._table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         for col in range(1, 7):
             header.setSectionResizeMode(col, QHeaderView.ResizeMode.ResizeToContents)
+        header.setCursor(Qt.CursorShape.PointingHandCursor)
 
         root_layout.addWidget(self._table, stretch=1)
 
@@ -237,9 +237,8 @@ class AccountsTab(BaseTab):
 
     def _filter_table(self) -> None:
         """Apply search and category filters and repopulate the table."""
+        self._table.setSortingEnabled(False)
         self._table.setRowCount(0)
-        self._row_map.clear()
-        self._username_map.clear()
 
         query = self._search_edit.text().strip().lower()
         cat_filter = self._cat_filter_combo.currentText()
@@ -254,18 +253,27 @@ class AccountsTab(BaseTab):
             if cat_filter not in ("Todas", "Sem categoria") and cat_filter not in item["cat_names"]:
                 continue
 
+            # col indices: 0=Usuario, 1=Status, 2=Cronograma, 3=Categoria, 4=Dia, 5=Proxy, 6=Data Inicio
+            vals = item["values"]
+            day_val = int(vals[4]) if str(vals[4]).isdigit() else 0
+            date_str = str(vals[6]) if vals[6] else ""
+
             self._table.insertRow(row)
-            for col, val in enumerate(item["values"]):
-                cell = QTableWidgetItem(str(val))
-                if col == 0:
-                    cell.setData(Qt.ItemDataRole.UserRole, item["id"])
+            for col, val in enumerate(vals):
+                if col == 4:
+                    cell = SortableItem(str(val), sort_key=day_val)
+                elif col == 6:
+                    cell = SortableItem(str(val), sort_key=date_str)
+                else:
+                    cell = SortableItem(str(val))
+                cell.setData(Qt.ItemDataRole.UserRole, item["id"])
                 if col in (1, 2, 3, 4, 6):
                     cell.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
                 self._table.setItem(row, col, cell)
 
-            self._row_map[row] = item["id"]
-            self._username_map[row] = item["username"]
             row += 1
+
+        self._table.setSortingEnabled(True)
 
     def _get_schedule_names(self) -> dict[int, str]:
         rows = self.app.db.fetch_all("SELECT id, name FROM schedules ORDER BY id")
@@ -273,8 +281,14 @@ class AccountsTab(BaseTab):
 
     def _get_selected_ids(self) -> list[int]:
         """Return list of selected account IDs."""
-        selected_rows = {idx.row() for idx in self._table.selectionModel().selectedRows()}
-        return [self._row_map[r] for r in selected_rows if r in self._row_map]
+        ids = []
+        for idx in self._table.selectionModel().selectedRows():
+            item = self._table.item(idx.row(), 0)
+            if item is not None:
+                aid = item.data(Qt.ItemDataRole.UserRole)
+                if aid is not None:
+                    ids.append(aid)
+        return ids
 
     def _get_selected_id(self) -> int | None:
         """Return a single selected ID (for single-item actions like edit)."""
@@ -721,9 +735,12 @@ class AccountsTab(BaseTab):
             QMessageBox.warning(self, "Aviso", "Selecione uma ou mais contas.")
             return
         for row in selected_rows:
-            username = self._username_map.get(row, "")
-            if username:
-                webbrowser.open(f"https://x.com/{username}")
+            # Column 0 shows "@username" — strip the leading "@"
+            item = self._table.item(row, 0)
+            if item is not None:
+                username = item.text().lstrip("@")
+                if username:
+                    webbrowser.open(f"https://x.com/{username}")
 
     def _toggle_active(self) -> None:
         """Toggle status between idle and paused for selected accounts."""
